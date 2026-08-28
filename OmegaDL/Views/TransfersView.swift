@@ -44,7 +44,7 @@ struct TransfersList: View {
             header
             Divider()
 
-            if manager.transfers.isEmpty {
+            if manager.transfers.isEmpty && !manager.isPreparing {
                 ContentUnavailableView("No Transfers", systemImage: "arrow.down.circle")
                     .frame(height: 180)
             } else {
@@ -72,6 +72,9 @@ struct TransfersList: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
+            if manager.isPreparing {
+                ProgressView().controlSize(.small)
+            }
             Button("Clear") { manager.clearFinished() }
                 .buttonStyle(.accessoryBar)
                 .disabled(!manager.transfers.contains { $0.isFinished })
@@ -87,9 +90,15 @@ private struct TransferRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(nsImage: NodeIcon.image(for: transfer.node))
+            Image(nsImage: NodeIcon.image(named: transfer.name))
                 .resizable()
                 .frame(width: 24, height: 24)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: transfer.isUpload ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.white, Color.accentColor)
+                        .offset(x: 3, y: 3)
+                }
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(transfer.name)
@@ -148,7 +157,7 @@ private struct TransferRow: View {
             .buttonStyle(.plain)
             .help("Cancel")
 
-        case .completed:
+        case .completed where !transfer.isUpload:
             Button {
                 manager.revealInFinder(transfer)
             } label: {
@@ -157,6 +166,10 @@ private struct TransferRow: View {
             }
             .buttonStyle(.plain)
             .help("Show in Finder")
+
+        case .completed:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.secondary)
 
         case .failed, .cancelled:
             Button {
@@ -182,11 +195,5 @@ func rateText(_ bytesPerSecond: Double) -> String {
 extension Text {
     init(rate bytesPerSecond: Double) {
         self.init(rateText(bytesPerSecond))
-    }
-}
-
-extension Transfer.State {
-    var isFailure: Bool {
-        if case .failed = self { true } else { false }
     }
 }

@@ -1,22 +1,32 @@
+import AppKit
 import Foundation
 import MegaKit
-import AppKit
 import Observation
 
 @Observable
 final class Transfer: Identifiable {
+    enum Kind {
+        case download(node: MegaNode, destination: URL)
+        case upload(file: URL, parent: String)
+    }
+
     enum State: Equatable {
         case queued
         case running
         case completed
         case failed(String)
         case cancelled
+
+        var isFailure: Bool {
+            if case .failed = self { true } else { false }
+        }
     }
 
     let id = UUID()
-    let node: MegaNode
+    let kind: Kind
     let source: Source
-    let destination: URL
+    let name: String
+    let size: Int
 
     var state: State = .queued
     var bytesCompleted = 0
@@ -25,14 +35,27 @@ final class Transfer: Identifiable {
 
     private var lastSample: (bytes: Int, time: ContinuousClock.Instant)?
 
-    init(node: MegaNode, source: Source, destination: URL) {
-        self.node = node
+    init(downloading node: MegaNode, to destination: URL, from source: Source) {
+        self.kind = .download(node: node, destination: destination)
         self.source = source
-        self.destination = destination
+        self.name = node.name
+        self.size = node.size
     }
 
-    var name: String { node.name }
-    var size: Int { node.size }
+    init(uploading file: URL, to parent: String, from source: Source) {
+        self.kind = .upload(file: file, parent: parent)
+        self.source = source
+        self.name = file.lastPathComponent
+        self.size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    }
+
+    var isUpload: Bool {
+        if case .upload = kind { true } else { false }
+    }
+
+    var revealURL: URL? {
+        if case .download(_, let destination) = kind { destination } else { nil }
+    }
 
     var fraction: Double {
         size > 0 ? min(1, Double(bytesCompleted) / Double(size)) : 0
@@ -48,8 +71,9 @@ final class Transfer: Identifiable {
     func record(bytes: Int) {
         let now = ContinuousClock.now
         if let last = lastSample {
-            let seconds = Double((now - last.time).components.attoseconds) / 1e18
-                + Double((now - last.time).components.seconds)
+            let elapsed = now - last.time
+            let seconds = Double(elapsed.components.seconds)
+                + Double(elapsed.components.attoseconds) / 1e18
             if seconds > 0.05 {
                 let instant = Double(bytes - last.bytes) / seconds
                 bytesPerSecond = bytesPerSecond == 0 ? instant : bytesPerSecond * 0.7 + instant * 0.3
@@ -65,8 +89,10 @@ final class Transfer: Identifiable {
 @Observable
 final class TransferManager {
     private(set) var transfers: [Transfer] = []
+    private(set) var isPreparing = false
 
-    private let engine = DownloadEngine()
+    private let downloads = DownloadEngine()
+    private let uploads = UploadEngine()
     private let maximumConcurrent = 2
     private var running = 0
 
@@ -85,21 +111,48 @@ final class TransferManager {
         transfers.filter { $0.state == .running }.reduce(0) { $0 + $1.bytesPerSecond }
     }
 
-    func enqueue(_ nodes: [MegaNode], from source: Source, into directory: URL) {
+    func download(_ nodes: [MegaNode], from source: Source, into directory: URL) {
         for node in nodes {
             if node.isDirectory {
-                enqueue(
+                download(
                     source.tree?.children(of: node.handle) ?? [],
                     from: source,
                     into: directory.appending(path: node.name)
                 )
             } else {
-                transfers.append(
-                    Transfer(node: node, source: source, destination: directory.appending(path: node.name))
-                )
+                transfers.append(Transfer(downloading: node, to: directory.appending(path: node.name), from: source))
             }
         }
         pump()
+    }
+
+    func upload(_ urls: [URL], to source: Source, parent: String) {
+        isPreparing = true
+        Task {
+            defer { isPreparing = false }
+            for url in urls {
+                await enqueue(url, to: source, parent: parent)
+            }
+            pump()
+        }
+    }
+
+    private func enqueue(_ url: URL, to source: Source, parent: String) async {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+
+        guard isDirectory.boolValue else {
+            transfers.append(Transfer(uploading: url, to: parent, from: source))
+            return
+        }
+
+        guard let folder = try? await source.createFolder(named: url.lastPathComponent, in: parent) else { return }
+        let children = (try? FileManager.default.contentsOfDirectory(
+            at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+        )) ?? []
+        for child in children.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            await enqueue(child, to: source, parent: folder.handle)
+        }
     }
 
     func cancel(_ transfer: Transfer) {
@@ -121,7 +174,8 @@ final class TransferManager {
     }
 
     func revealInFinder(_ transfer: Transfer) {
-        NSWorkspace.shared.activateFileViewerSelecting([transfer.destination])
+        guard let url = transfer.revealURL else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
     private func pump() {
@@ -137,14 +191,24 @@ final class TransferManager {
         let id = transfer.id
         transfer.task = Task { [weak self] in
             guard let self else { return }
+            let report: @Sendable (Int) -> Void = { bytes in
+                Task { @MainActor [weak self] in self?.report(bytes: bytes, for: id) }
+            }
+
             do {
-                let descriptor = try await transfer.source.descriptor(for: transfer.node)
-                try FileManager.default.createDirectory(
-                    at: transfer.destination.deletingLastPathComponent(),
-                    withIntermediateDirectories: true
-                )
-                try await engine.download(descriptor, to: transfer.destination) { bytes in
-                    Task { @MainActor [weak self] in self?.report(bytes: bytes, for: id) }
+                switch transfer.kind {
+                case .download(let node, let destination):
+                    let descriptor = try await transfer.source.descriptor(for: node)
+                    try FileManager.default.createDirectory(
+                        at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
+                    )
+                    try await downloads.download(descriptor, to: destination, onProgress: report)
+
+                case .upload(let file, let parent):
+                    _ = try await transfer.source.upload(
+                        fileAt: file, as: transfer.name, to: parent, onProgress: report
+                    )
+                    await transfer.source.refresh()
                 }
                 transfer.state = .completed
                 transfer.bytesCompleted = transfer.size

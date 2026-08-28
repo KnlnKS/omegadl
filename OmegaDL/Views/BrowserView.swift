@@ -7,6 +7,7 @@ struct BrowserView: View {
     let source: Source
 
     @State private var selection = Set<MegaNode.ID>()
+    @State private var isDropTargeted = false
 
     private var breadcrumbs: [MegaNode] { model.breadcrumbs(in: source) }
 
@@ -24,6 +25,14 @@ struct BrowserView: View {
         content
             .navigationTitle(breadcrumbs.last?.name ?? source.name)
             .navigationSubtitle(subtitle)
+            .dropDestination(for: URL.self) { urls, _ in accept(urls) } isTargeted: { targeted in
+                withAnimation(.spring(duration: 0.25, bounce: 0)) { isDropTargeted = targeted }
+            }
+            .overlay {
+                if isDropTargeted, model.uploadTarget(in: source) != nil {
+                    DropIndicator(folder: breadcrumbs.last?.name ?? source.name)
+                }
+            }
             .task { await source.load() }
             .toolbar { toolbar }
     }
@@ -109,15 +118,44 @@ struct BrowserView: View {
             .help("Download Selection")
         }
         ToolbarItem {
+            Button {
+                chooseUploads()
+            } label: {
+                Label("Upload", systemImage: "arrow.up.to.line")
+            }
+            .disabled(model.uploadTarget(in: source) == nil)
+            .help(source.allowsUpload ? "Upload to This Folder" : "Sign in to upload")
+        }
+        ToolbarItem {
             TransfersButton(manager: model.transfers)
         }
+    }
+
+    private func chooseUploads() {
+        guard let parent = model.uploadTarget(in: source) else { return }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Upload"
+        panel.message = "Choose files or folders to upload to \(breadcrumbs.last?.name ?? source.name)."
+
+        guard panel.runModal() == .OK else { return }
+        model.transfers.upload(panel.urls, to: source, parent: parent)
+    }
+
+    private func accept(_ urls: [URL]) -> Bool {
+        guard let parent = model.uploadTarget(in: source) else { return false }
+        model.transfers.upload(urls, to: source, parent: parent)
+        return true
     }
 
     private func download(_ nodes: [MegaNode]) {
         guard !nodes.isEmpty,
               let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
         else { return }
-        model.transfers.enqueue(nodes, from: source, into: downloads)
+        model.transfers.download(nodes, from: source, into: downloads)
     }
 
     private func open(_ node: MegaNode) {
@@ -126,6 +164,27 @@ struct BrowserView: View {
             model.open(node)
         }
         selection.removeAll()
+    }
+}
+
+struct DropIndicator: View {
+    let folder: String
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(.tint, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                .background(RoundedRectangle(cornerRadius: 12).fill(.tint.opacity(0.08)))
+
+            Label("Upload to \(folder)", systemImage: "arrow.up.circle")
+                .font(.title3)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.regularMaterial, in: .capsule)
+        }
+        .padding(10)
+        .allowsHitTesting(false)
+        .transition(.opacity)
     }
 }
 
@@ -170,11 +229,12 @@ struct NodeLabel: View {
 
 enum NodeIcon {
     static func image(for node: MegaNode) -> NSImage {
-        if node.isDirectory {
-            return NSWorkspace.shared.icon(for: .folder)
-        }
-        let extensionName = (node.name as NSString).pathExtension
-        let type = UTType(filenameExtension: extensionName) ?? .data
+        image(named: node.name, isDirectory: node.isDirectory)
+    }
+
+    static func image(named name: String, isDirectory: Bool = false) -> NSImage {
+        guard !isDirectory else { return NSWorkspace.shared.icon(for: .folder) }
+        let type = UTType(filenameExtension: (name as NSString).pathExtension) ?? .data
         return NSWorkspace.shared.icon(for: type)
     }
 }

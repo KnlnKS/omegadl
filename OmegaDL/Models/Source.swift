@@ -71,7 +71,25 @@ final class Source: Identifiable {
         }
     }
 
+    func refresh() async {
+        if let updated = try? await session.loadTree() { tree = updated }
+    }
+
+    var allowsUpload: Bool {
+        if case .account = kind { true } else { false }
+    }
+
     func descriptor(for node: MegaNode) async throws -> DownloadDescriptor {
         try await session.downloadDescriptor(for: node)
+    }
+
+    func createFolder(named name: String, in parent: String) async throws -> MegaNode {
+        try await session.createFolder(named: name, in: parent)
+    }
+
+    func upload(
+        fileAt url: URL, as name: String, to parent: String, onProgress: @escaping @Sendable (Int) -> Void
+    ) async throws -> MegaNode {
+        try await session.upload(fileAt: url, as: name, to: parent, onProgress: onProgress)
     }
 }

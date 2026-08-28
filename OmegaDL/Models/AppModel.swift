@@ -93,6 +93,14 @@ final class AppModel {
         return tree.roots.count == 1 ? tree.children(of: tree.roots[0].handle) : tree.roots
     }
 
+    func uploadTarget(in source: Source) -> String? {
+        guard source.allowsUpload, let tree = source.tree else { return nil }
+        if let folder = currentFolder, let node = tree.node(folder), node.isDirectory, node.kind != .rubbish {
+            return folder
+        }
+        return tree.roots.first { $0.kind == .root }?.handle
+    }
+
     func open(_ node: MegaNode) {
         guard node.isDirectory else { return }
         currentFolder = node.handle

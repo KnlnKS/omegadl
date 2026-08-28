@@ -94,3 +94,43 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
         #expect(tree.descendants(of: Live.rootHandle).count == Live.nodeCount - 1)
     }
 }
+
+@Suite struct ShareKeyTests {
+    private let masterKey = Data((0..<16).map(UInt8.init))
+    private let shareKey = Data((0..<16).map { UInt8(255 - $0) })
+
+    private func entry(handle: String, authorized: Bool) -> ShareKeyEntry {
+        let wrapped = AES128.ecbEncrypt(shareKey, key: masterKey)
+        let authority = AES128.ecbEncrypt(Data(handle.utf8) + Data(handle.utf8), key: masterKey)
+        return ShareKeyEntry(
+            h: handle,
+            k: Base64URL.encode(wrapped),
+            ha: Base64URL.encode(authorized ? authority : Data(count: 16))
+        )
+    }
+
+    @Test func `unwraps a share key whose authority checks out`() {
+        let keys = MegaSession.shareKeys(from: [entry(handle: "AbCdEfGh", authorized: true)], masterKey: masterKey)
+        #expect(keys["AbCdEfGh"] == shareKey)
+    }
+
+    @Test func `discards a share key whose authority was tampered with`() {
+        let keys = MegaSession.shareKeys(from: [entry(handle: "AbCdEfGh", authorized: false)], masterKey: masterKey)
+        #expect(keys.isEmpty)
+    }
+
+    @Test func `accepts an entry that carries no authority value`() {
+        let wrapped = AES128.ecbEncrypt(shareKey, key: masterKey)
+        let keys = MegaSession.shareKeys(
+            from: [ShareKeyEntry(h: "AbCdEfGh", k: Base64URL.encode(wrapped), ha: nil)],
+            masterKey: masterKey
+        )
+        #expect(keys["AbCdEfGh"] == shareKey)
+    }
+
+    @Test func `names the standard account roots`() {
+        #expect(MegaNode.Kind.root.standardName == "Cloud Drive")
+        #expect(MegaNode.Kind.rubbish.standardName == "Rubbish")
+        #expect(MegaNode.Kind.file.standardName == nil)
+    }
+}

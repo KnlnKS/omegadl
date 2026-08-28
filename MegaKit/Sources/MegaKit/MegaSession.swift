@@ -11,11 +11,18 @@ public actor MegaSession {
     private enum Context: Sendable {
         case publicFolder(handle: String)
         case publicFile(handle: String, key: MegaFileKey)
+        case account(AccountSession)
     }
 
     private let api: APIClient
     private var decryptor: NodeDecryptor
     private let context: Context
+
+    public init(account: AccountSession, api: APIClient = APIClient()) {
+        self.api = api
+        self.context = .account(account)
+        self.decryptor = NodeDecryptor()
+    }
 
     public init(link: MegaLink, api: APIClient = APIClient()) throws {
         self.api = api
@@ -35,6 +42,16 @@ public actor MegaSession {
         case .publicFolder(let handle):
             await api.setFolderID(handle)
             let response: FilesResponse = try await api.request(FilesCommand())
+            return MegaTree(nodes: response.f.compactMap(decryptor.decrypt))
+
+        case .account(let account):
+            await api.setSessionID(account.sessionID)
+            let response: FilesResponse = try await api.request(FilesCommand())
+            decryptor = .account(
+                userHandle: account.userHandle,
+                masterKey: account.masterKey,
+                shareKeys: Self.shareKeys(from: response.ok, masterKey: account.masterKey)
+            )
             return MegaTree(nodes: response.f.compactMap(decryptor.decrypt))
 
         case .publicFile(let handle, let key):
@@ -59,7 +76,7 @@ public actor MegaSession {
         guard let key = node.fileKey else { throw MegaError.decryptionFailed }
 
         let command: DownloadCommand = switch context {
-        case .publicFolder: DownloadCommand(node: node.handle)
+        case .publicFolder, .account: DownloadCommand(node: node.handle)
         case .publicFile(let handle, _): DownloadCommand(publicHandle: handle, wantsURL: true)
         }
 
@@ -68,5 +85,20 @@ public actor MegaSession {
             throw MegaError.malformedResponse
         }
         return DownloadDescriptor(url: url, size: response.s, key: key, name: node.name)
+    }
+
+    static func shareKeys(from entries: [ShareKeyEntry]?, masterKey: Data) -> [String: Data] {
+        var keys = [String: Data]()
+        for entry in entries ?? [] {
+            guard let wrapped = Base64URL.decode(entry.k), wrapped.count == 16 else { continue }
+            let handle = Data(entry.h.utf8)
+            if let authority = entry.ha.flatMap(Base64URL.decode) {
+                guard handle.count == 8,
+                      AES128.ecbEncrypt(handle + handle, key: masterKey) == authority
+                else { continue }
+            }
+            keys[entry.h] = AES128.ecbDecrypt(wrapped, key: masterKey)
+        }
+        return keys
     }
 }

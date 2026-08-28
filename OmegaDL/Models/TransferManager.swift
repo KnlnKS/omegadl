@@ -15,7 +15,7 @@ final class Transfer: Identifiable {
 
     let id = UUID()
     let node: MegaNode
-    let source: LinkSource
+    let source: Source
     let destination: URL
 
     var state: State = .queued
@@ -25,7 +25,7 @@ final class Transfer: Identifiable {
 
     private var lastSample: (bytes: Int, time: ContinuousClock.Instant)?
 
-    init(node: MegaNode, source: LinkSource, destination: URL) {
+    init(node: MegaNode, source: Source, destination: URL) {
         self.node = node
         self.source = source
         self.destination = destination
@@ -85,7 +85,7 @@ final class TransferManager {
         transfers.filter { $0.state == .running }.reduce(0) { $0 + $1.bytesPerSecond }
     }
 
-    func enqueue(_ nodes: [MegaNode], from source: LinkSource, into directory: URL) {
+    func enqueue(_ nodes: [MegaNode], from source: Source, into directory: URL) {
         for node in nodes {
             if node.isDirectory {
                 enqueue(

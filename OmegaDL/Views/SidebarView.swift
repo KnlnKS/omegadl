@@ -6,22 +6,35 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $model.selectedSourceID) {
-            Section("Links") {
-                ForEach(model.sources) { source in
-                    Label(source.name, systemImage: symbol(for: source))
-                        .lineLimit(1)
-                        .tag(source.id)
+            Section("Account") {
+                if let account = model.account {
+                    row(account)
                         .contextMenu {
-                            Button("Copy Link") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(source.link.url.absoluteString, forType: .string)
-                            }
-                            Button("Remove", role: .destructive) { model.remove(source) }
+                            Button("Sign Out", role: .destructive) { model.signOut() }
                         }
+                } else {
+                    Button {
+                        model.isSigningIn = true
+                    } label: {
+                        Label("Sign In…", systemImage: "person.crop.circle.badge.plus")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if !model.links.isEmpty {
+                Section("Links") {
+                    ForEach(model.links) { source in
+                        row(source)
+                            .contextMenu {
+                                Button("Copy Link") { copy(source) }
+                                Button("Remove", role: .destructive) { model.remove(source) }
+                            }
+                    }
                 }
             }
         }
-        .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+        .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
         .safeAreaInset(edge: .bottom) {
             Button {
                 model.isAddingLink = true
@@ -37,11 +50,16 @@ struct SidebarView: View {
         }
     }
 
-    private func symbol(for source: LinkSource) -> String {
-        switch source.status {
-        case .failed: "exclamationmark.triangle"
-        case .loading: "arrow.trianglehead.2.clockwise"
-        default: source.link.kind == .folder ? "folder" : "doc"
-        }
+    private func row(_ source: Source) -> some View {
+        Label(source.name, systemImage: source.symbol)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .tag(source.id)
+    }
+
+    private func copy(_ source: Source) {
+        guard let link = source.link else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(link.url.absoluteString, forType: .string)
     }
 }

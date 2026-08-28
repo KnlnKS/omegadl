@@ -4,7 +4,7 @@ import SwiftUI
 
 struct BrowserView: View {
     @Bindable var model: AppModel
-    let source: LinkSource
+    let source: Source
 
     @State private var selection = Set<MegaNode.ID>()
 
@@ -93,7 +93,7 @@ struct BrowserView: View {
             } label: {
                 Label("Back", systemImage: "chevron.left")
             }
-            .disabled(breadcrumbs.count <= 1)
+            .disabled(model.currentFolder == nil)
             .help("Enclosing Folder")
         }
         ToolbarItem(placement: .navigation) {

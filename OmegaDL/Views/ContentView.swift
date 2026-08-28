@@ -13,17 +13,21 @@ struct ContentView: View {
                     .id(source.id)
             } else {
                 ContentUnavailableView {
-                    Label("No Folder Open", systemImage: "link")
+                    Label("Nothing Open", systemImage: "shippingbox")
                 } description: {
-                    Text("Add a MEGA link to browse and download its contents.")
+                    Text("Sign in to your account, or add a MEGA link to browse and download it.")
                 } actions: {
-                    Button("Add Link…") { model.isAddingLink = true }
+                    Button("Sign In…") { model.isSigningIn = true }
                         .buttonStyle(.borderedProminent)
+                    Button("Add Link…") { model.isAddingLink = true }
                 }
             }
         }
         .sheet(isPresented: Bindable(model).isAddingLink) {
             AddLinkSheet(model: model)
+        }
+        .sheet(isPresented: Bindable(model).isSigningIn) {
+            SignInSheet(model: model)
         }
     }
 }

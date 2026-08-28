@@ -7,6 +7,15 @@ public struct MegaNode: Sendable, Identifiable, Hashable {
         case root = 2
         case inbox = 3
         case rubbish = 4
+
+        public var standardName: String? {
+            switch self {
+            case .root: "Cloud Drive"
+            case .inbox: "Inbox"
+            case .rubbish: "Rubbish"
+            case .file, .folder: nil
+            }
+        }
     }
 
     public enum Key: Sendable, Hashable {
@@ -105,7 +114,7 @@ public struct NodeDecryptor: Sendable {
             kind: kind,
             size: raw.s ?? 0,
             modified: Date(timeIntervalSince1970: TimeInterval(raw.ts ?? 0)),
-            name: attributeKey.flatMap { Self.name(from: raw.a, key: $0) } ?? raw.h,
+            name: attributeKey.flatMap { Self.name(from: raw.a, key: $0) } ?? kind.standardName ?? raw.h,
             key: key
         )
     }

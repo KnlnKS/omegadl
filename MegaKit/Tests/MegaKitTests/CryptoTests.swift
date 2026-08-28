@@ -59,14 +59,14 @@ private func hex(_ string: String) -> Data {
     @Test func `round-trips CBC with a zero IV`() {
         let key = hex("0f0e0d0c0b0a09080706050403020100")
         let plaintext = Data((0..<64).map { UInt8($0 &* 3) })
-        let ciphertext = AES128.cbcEncryptZeroIV(plaintext, key: key)
-        #expect(AES128.cbcDecryptZeroIV(ciphertext, key: key) == plaintext)
+        let ciphertext = AES128.cbcEncrypt(plaintext, key: key)
+        #expect(AES128.cbcDecrypt(ciphertext, key: key) == plaintext)
     }
 
     @Test func `treats empty input as empty output`() {
         let key = Data(count: 16)
         #expect(AES128.ecbEncrypt(Data(), key: key).isEmpty)
-        #expect(AES128.cbcDecryptZeroIV(Data(), key: key).isEmpty)
+        #expect(AES128.cbcDecrypt(Data(), key: key).isEmpty)
     }
 }
 

@@ -13,12 +13,12 @@ public enum AES128 {
         crypt(data, key: key, operation: kCCDecrypt, options: kCCOptionECBMode, iv: nil)
     }
 
-    public static func cbcEncryptZeroIV(_ data: Data, key: Data) -> Data {
-        crypt(data, key: key, operation: kCCEncrypt, options: 0, iv: Data(count: blockSize))
+    public static func cbcEncrypt(_ data: Data, key: Data, iv: Data = Data(count: AES128.blockSize)) -> Data {
+        crypt(data, key: key, operation: kCCEncrypt, options: 0, iv: iv)
     }
 
-    public static func cbcDecryptZeroIV(_ data: Data, key: Data) -> Data {
-        crypt(data, key: key, operation: kCCDecrypt, options: 0, iv: Data(count: blockSize))
+    public static func cbcDecrypt(_ data: Data, key: Data, iv: Data = Data(count: AES128.blockSize)) -> Data {
+        crypt(data, key: key, operation: kCCDecrypt, options: 0, iv: iv)
     }
 
     private static func crypt(_ data: Data, key: Data, operation: Int, options: Int, iv: Data?) -> Data {

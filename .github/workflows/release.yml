@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+      - "LICENSE"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+env:
+  XCODE_APP: /Applications/Xcode_26.6.app
+
+jobs:
+  release:
+    name: Build, test and publish
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Select Xcode
+        run: |
+          if [ -d "$XCODE_APP" ]; then
+            sudo xcode-select --switch "$XCODE_APP"
+          else
+            echo "::warning::$XCODE_APP not present, using the image default"
+          fi
+          xcodebuild -version
+          swift --version
+
+      - name: Cache SwiftPM dependencies
+        uses: actions/cache@v6
+        with:
+          path: MegaKit/.build
+          key: swiftpm-${{ runner.os }}-${{ hashFiles('MegaKit/Package.resolved') }}
+          restore-keys: swiftpm-${{ runner.os }}-
+
+      - name: Test MegaKit
+        run: swift test --package-path MegaKit
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve version
+        id: version
+        run: |
+          echo "name=1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          echo "tag=v1.0.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project OmegaDL.xcodeproj \
+            -scheme OmegaDL \
+            -configuration Release \
+            -derivedDataPath build \
+            MARKETING_VERSION='${{ steps.version.outputs.name }}' \
+            CURRENT_PROJECT_VERSION='${{ github.run_number }}' \
+            build
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release/OmegaDL.app"
+          test -d "$APP"
+          codesign --verify --strict --verbose=2 "$APP"
+          ARCHIVE="OmegaDL-${{ steps.version.outputs.name }}.zip"
+          ditto -c -k --keepParent --sequesterRsrc "$APP" "$ARCHIVE"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "sha=$(shasum -a 256 "$ARCHIVE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: OmegaDL-${{ steps.version.outputs.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cat > notes.md <<EOF
+          Built from \`${GITHUB_SHA::7}\` on $(date -u '+%Y-%m-%d').
+
+          ### Install
+
+          Unzip and drag **OmegaDL.app** to Applications, then run:
+
+          \`\`\`
+          xattr -dr com.apple.quarantine /Applications/OmegaDL.app
+          \`\`\`
+
+          The app is ad-hoc signed rather than signed with an Apple Developer ID
+          and notarised, so macOS quarantines it after download and refuses to
+          open it until that attribute is cleared.
+
+          Requires macOS 26 or later.
+
+          \`\`\`
+          SHA-256  ${{ steps.package.outputs.sha }}
+          \`\`\`
+          EOF
+          gh release create '${{ steps.version.outputs.tag }}' \
+            '${{ steps.package.outputs.archive }}' \
+            --title 'OmegaDL ${{ steps.version.outputs.name }}' \
+            --notes-file notes.md \
+            --target '${{ github.sha }}'

@@ -4,6 +4,7 @@ import Observation
 
 @Observable
 final class AppModel {
+    let transfers = TransferManager()
     private(set) var sources: [LinkSource] = []
     var selectedSourceID: LinkSource.ID?
     var currentFolder: String?

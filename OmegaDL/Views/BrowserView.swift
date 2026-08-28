@@ -61,8 +61,12 @@ struct BrowserView: View {
             }
             .width(min: 120, ideal: 170)
         }
-        .contextMenu(forSelectionType: MegaNode.ID.self) { _ in
-            EmptyView()
+        .contextMenu(forSelectionType: MegaNode.ID.self) { ids in
+            let chosen = items.filter { ids.contains($0.id) }
+            Button(chosen.count > 1 ? "Download \(chosen.count) Items" : "Download") {
+                download(chosen)
+            }
+            .disabled(chosen.isEmpty)
         } primaryAction: { ids in
             if let node = items.first(where: { ids.contains($0.id) }) {
                 open(node)
@@ -84,6 +88,25 @@ struct BrowserView: View {
         ToolbarItem(placement: .navigation) {
             BreadcrumbBar(nodes: breadcrumbs) { model.currentFolder = $0.handle }
         }
+        ToolbarItem {
+            Button {
+                download(model.contents(of: source).filter { selection.contains($0.id) })
+            } label: {
+                Label("Download", systemImage: "arrow.down")
+            }
+            .disabled(selection.isEmpty)
+            .help("Download Selection")
+        }
+        ToolbarItem {
+            TransfersButton(manager: model.transfers)
+        }
+    }
+
+    private func download(_ nodes: [MegaNode]) {
+        guard !nodes.isEmpty,
+              let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        else { return }
+        model.transfers.enqueue(nodes, from: source, into: downloads)
     }
 
     private func open(_ node: MegaNode) {

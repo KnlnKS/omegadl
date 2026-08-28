@@ -12,16 +12,18 @@ struct OmegaDLApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             SidebarCommands()
-            CommandMenu("Account") {
+            CommandGroup(after: .appInfo) {
+                Divider()
                 if model.isSignedIn {
                     Button("Sign Out") { model.signOut() }
                 } else {
                     Button("Sign In…") { model.isSigningIn = true }
                 }
-                Divider()
-                Button("Add Link…") { model.isAddingLink = true }
-                    .keyboardShortcut("l", modifiers: .command)
             }
+        }
+
+        Settings {
+            SettingsView()
         }
     }
 }

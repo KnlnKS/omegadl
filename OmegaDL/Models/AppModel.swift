@@ -163,13 +163,9 @@ final class AppModel {
         select(linkItems.first?.id)
     }
 
-    private var downloadsDirectory: URL? {
-        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-    }
-
     func download(_ nodes: [MegaNode], from source: Source) {
-        guard !nodes.isEmpty, let downloads = downloadsDirectory else { return }
-        transfers.download(nodes, from: source, into: downloads)
+        guard !nodes.isEmpty else { return }
+        transfers.download(nodes, from: source, into: Preferences.downloadDirectory)
     }
 
     func downloadEverything(from source: Source) {

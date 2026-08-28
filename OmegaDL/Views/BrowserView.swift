@@ -149,9 +149,6 @@ struct BrowserView: View {
             .keyboardShortcut("r", modifiers: .command)
             .help("Refresh")
         }
-        ToolbarItem {
-            TransfersButton(manager: model.transfers)
-        }
     }
 
     private var selectedNodes: [MegaNode] {

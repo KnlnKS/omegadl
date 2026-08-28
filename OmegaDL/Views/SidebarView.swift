@@ -6,12 +6,8 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: selection) {
-            if !model.accountItems.isEmpty {
-                Section {
-                    ForEach(model.accountItems) { item in
-                        row(item)
-                    }
-                }
+            ForEach(model.accountItems) { item in
+                row(item)
             }
 
             if !model.linkItems.isEmpty {
@@ -34,16 +30,6 @@ struct SidebarView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
-        .safeAreaInset(edge: .bottom) {
-            Button {
-                model.isAddingLink = true
-            } label: {
-                Label("Add Link", systemImage: "plus")
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .buttonStyle(.accessoryBar)
-            .padding(8)
-        }
     }
 
     private var selection: Binding<SidebarItem.ID?> {

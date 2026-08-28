@@ -23,6 +23,20 @@ struct ContentView: View {
                 }
             }
         }
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    model.isAddingLink = true
+                } label: {
+                    Label("Add Link", systemImage: "plus")
+                }
+                .keyboardShortcut("l", modifiers: .command)
+                .help("Add a MEGA Link")
+            }
+            ToolbarItem {
+                TransfersButton(manager: model.transfers)
+            }
+        }
         .task { await model.loadAllSources() }
         .sheet(isPresented: $model.isAddingLink) {
             AddLinkSheet(model: model)

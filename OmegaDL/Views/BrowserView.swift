@@ -133,6 +133,10 @@ struct BrowserView: View {
                     download(chosen)
                 }
             }
+            if uploadTarget != nil {
+                if !chosen.isEmpty { Divider() }
+                uploadButton
+            }
             if isInRubbish, !chosen.isEmpty {
                 Divider()
                 if let target = restoreTarget(for: chosen) {
@@ -144,10 +148,7 @@ struct BrowserView: View {
                 Divider()
                 Button("Move to Rubbish Bin") { moveToRubbish(chosen) }
             }
-            if uploadTarget != nil {
-                if !chosen.isEmpty { Divider() }
-                uploadButton
-            }
+
         } primaryAction: { ids in
             if let node = items.first(where: { ids.contains($0.id) }) {
                 open(node)

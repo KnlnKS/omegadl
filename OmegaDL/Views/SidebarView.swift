@@ -20,7 +20,6 @@ struct SidebarView: View {
                                         model.downloadEverything(from: source)
                                     }
                                     .disabled(source.tree == nil)
-                                    Divider()
                                     Button("Copy Link") { copy(source) }
                                     Button("Remove", role: .destructive) { model.remove(source) }
                                 }

@@ -26,7 +26,7 @@ struct OmegaDLApp: App {
                     Button {
                         model.isSigningIn = true
                     } label: {
-                        Label("Sign In…", systemImage: "person.crop.circle.badge.plus")
+                        Label("Sign In", systemImage: "person.crop.circle.badge.plus")
                     }
                 }
             }

@@ -74,7 +74,7 @@ public struct UploadEngine: Sendable {
             }
         }
 
-        guard let raw = tokens.last, tokens.count == 1 else { throw MegaError.malformedResponse }
+        guard let raw = tokens.last else { throw MegaError.malformedResponse }
         return UploadResult(token: try Self.token(from: raw), metaMAC: ChunkMAC.condense(macs, key: key))
     }
 

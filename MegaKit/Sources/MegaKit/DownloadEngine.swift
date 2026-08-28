@@ -1,19 +1,34 @@
+import CryptoKit
 import Darwin
 import Foundation
 
 public struct DownloadEngine: Sendable {
     public static let partExtension = "omegadl-part"
-    public static let stateExtension = "omegadl-state"
 
     let maximumConnections: Int
     let segmentSize: Int
     let maximumAttempts: Int
+    let stateDirectory: URL
     private let session: URLSession
 
-    public init(maximumConnections: Int = 8, segmentSize: Int = 2 << 20, maximumAttempts: Int = 5) {
+    public static var defaultStateDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return base
+            .appending(path: Bundle.main.bundleIdentifier ?? "MegaKit")
+            .appending(path: "PartialDownloads")
+    }
+
+    public init(
+        maximumConnections: Int = 8,
+        segmentSize: Int = 2 << 20,
+        maximumAttempts: Int = 5,
+        stateDirectory: URL = DownloadEngine.defaultStateDirectory
+    ) {
         self.maximumConnections = max(1, maximumConnections)
         self.segmentSize = max(MegaChunking.firstChunkSize, segmentSize)
         self.maximumAttempts = maximumAttempts
+        self.stateDirectory = stateDirectory
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpMaximumConnectionsPerHost = self.maximumConnections
@@ -29,7 +44,8 @@ public struct DownloadEngine: Sendable {
         onProgress: @Sendable (Int) -> Void = { _ in }
     ) async throws {
         let partURL = destination.appendingPathExtension(Self.partExtension)
-        let stateURL = destination.appendingPathExtension(Self.stateExtension)
+        let stateURL = stateURL(for: destination)
+        try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let chunks = MegaChunking.chunks(fileSize: descriptor.size)
 
         var state = PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
@@ -85,6 +101,11 @@ public struct DownloadEngine: Sendable {
         try? FileManager.default.removeItem(at: destination)
         try FileManager.default.moveItem(at: partURL, to: destination)
         try? FileManager.default.removeItem(at: stateURL)
+    }
+
+    public func stateURL(for destination: URL) -> URL {
+        let digest = SHA256.hash(data: Data(destination.standardizedFileURL.path.utf8))
+        return stateDirectory.appending(path: digest.map { String(format: "%02x", $0) }.joined() + ".state")
     }
 
     private struct SegmentResult: Sendable {

@@ -184,6 +184,11 @@ final class TransferManager {
         transfers.removeAll { $0.isFinished }
     }
 
+    func remove(_ transfer: Transfer) {
+        cancel(transfer)
+        transfers.removeAll { $0.id == transfer.id }
+    }
+
     func revealInFinder(_ transfer: Transfer) {
         guard let url = transfer.revealURL else { return }
         NSWorkspace.shared.activateFileViewerSelecting([url])

@@ -146,6 +146,14 @@ final class AppModel {
         persistLinks()
     }
 
+    func removeAllLinks() {
+        links.removeAll()
+        persistLinks()
+        if selectedItem == nil || linkItems.isEmpty {
+            select((accountItems + linkItems).first?.id)
+        }
+    }
+
     func select(_ itemID: SidebarItem.ID?) {
         selectedItemID = itemID
         currentFolder = nil

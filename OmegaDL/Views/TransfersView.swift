@@ -133,6 +133,19 @@ private struct TransferRow: View {
         .onTapGesture(count: 2) {
             if transfer.state == .completed { manager.revealInFinder(transfer) }
         }
+        .contextMenu {
+            if transfer.state == .completed, !transfer.isUpload {
+                Button("Show in Finder") { manager.revealInFinder(transfer) }
+                Divider()
+            }
+            if transfer.isFinished, transfer.state != .completed {
+                Button("Try Again") { manager.retry(transfer) }
+                Divider()
+            }
+            Button(transfer.isFinished ? "Remove from List" : "Cancel", role: .destructive) {
+                manager.remove(transfer)
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(transfer.isUpload ? "Upload" : "Download"), \(transfer.name)")
         .accessibilityValue(status)

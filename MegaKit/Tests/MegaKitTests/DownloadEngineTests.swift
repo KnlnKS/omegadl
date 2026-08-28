@@ -90,13 +90,17 @@ private func makeScratch() throws -> URL {
 
         let (_, target) = try await descriptor(for: Live.smallFileHandle)
         let destination = scratch.appending(path: target.name)
-        try await DownloadEngine().download(target, to: destination)
+        let engine = DownloadEngine(stateDirectory: scratch.appending(path: "state"))
+        try await engine.download(target, to: destination)
 
         let data = try Data(contentsOf: destination)
         #expect(data.count == Live.smallFileSize)
         #expect(String(decoding: data.prefix(9), as: UTF8.self) == "[DEFAULT]")
-        #expect(!FileManager.default.fileExists(atPath: destination.path + ".\(DownloadEngine.stateExtension)"))
+        #expect(!FileManager.default.fileExists(atPath: engine.stateURL(for: destination).path))
         #expect(!FileManager.default.fileExists(atPath: destination.path + ".\(DownloadEngine.partExtension)"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: scratch.path).filter {
+            $0.hasSuffix(".state")
+        }.isEmpty)
     }
 
     @Test(liveOnly) func `downloads a multi-segment file in parallel and verifies its MAC`() async throws {
@@ -142,8 +146,9 @@ private func makeScratch() throws -> URL {
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         let (_, target) = try await descriptor(for: Live.largeFileHandle)
+        let engine = DownloadEngine(stateDirectory: scratch.appending(path: "state"))
         let reference = scratch.appending(path: "reference")
-        try await DownloadEngine().download(target, to: reference)
+        try await engine.download(target, to: reference)
         let expected = try Data(contentsOf: reference)
 
         let destination = scratch.appending(path: "resumed")
@@ -159,15 +164,47 @@ private func makeScratch() throws -> URL {
             )
         }
         try Data(expected).write(to: destination.appendingPathExtension(DownloadEngine.partExtension))
-        try state.write(to: destination.appendingPathExtension(DownloadEngine.stateExtension))
+        try FileManager.default.createDirectory(at: engine.stateDirectory, withIntermediateDirectories: true)
+        try state.write(to: engine.stateURL(for: destination))
 
         let firstReport = Mutex<Int?>(nil)
-        try await DownloadEngine().download(target, to: destination) { bytes in
+        try await engine.download(target, to: destination) { bytes in
             firstReport.withLock { if $0 == nil { $0 = bytes } }
         }
 
         #expect(try Data(contentsOf: destination) == expected)
         #expect(firstReport.withLock { $0 } == state.completedBytes)
         #expect(state.completedBytes > target.size - MegaChunking.maximumChunkSize - 1)
+    }
+}
+
+@Suite struct StateLocationTests {
+    @Test func `keeps state out of the download folder`() throws {
+        let scratch = try makeScratch()
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let state = scratch.appending(path: "state")
+        let engine = DownloadEngine(stateDirectory: state)
+        let url = engine.stateURL(for: scratch.appending(path: "movie.mkv"))
+
+        #expect(url.deletingLastPathComponent().path == state.path)
+        #expect(url.pathExtension == "state")
+        #expect(!url.lastPathComponent.contains("movie"))
+    }
+
+    @Test func `gives each destination its own state file`() throws {
+        let engine = DownloadEngine(stateDirectory: URL(filePath: "/tmp/state"))
+        let a = engine.stateURL(for: URL(filePath: "/a/movie.mkv"))
+        let b = engine.stateURL(for: URL(filePath: "/b/movie.mkv"))
+
+        #expect(a != b)
+        #expect(a == engine.stateURL(for: URL(filePath: "/a/movie.mkv")))
+        #expect(a == engine.stateURL(for: URL(filePath: "/a/./movie.mkv")))
+    }
+
+    @Test func `defaults to application support rather than the download folder`() {
+        let path = DownloadEngine.defaultStateDirectory.path
+        #expect(path.contains("Application Support") || path.contains("tmp"))
+        #expect(path.hasSuffix("PartialDownloads"))
     }
 }

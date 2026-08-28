@@ -4,6 +4,8 @@ import SwiftUI
 struct SidebarView: View {
     @Bindable var model: AppModel
 
+    @State private var isConfirmingRemoveAll = false
+
     var body: some View {
         List(selection: selection) {
             ForEach(model.accountItems) { item in
@@ -21,7 +23,12 @@ struct SidebarView: View {
                                     }
                                     .disabled(source.tree == nil)
                                     Button("Copy Link") { copy(source) }
+                                    Divider()
                                     Button("Remove", role: .destructive) { model.remove(source) }
+                                    Button("Remove All Links…", role: .destructive) {
+                                        isConfirmingRemoveAll = true
+                                    }
+                                    .disabled(model.links.count < 2)
                                 }
                             }
                     }
@@ -29,6 +36,16 @@ struct SidebarView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
+        .confirmationDialog(
+            "Remove all \(model.links.count) links?",
+            isPresented: $isConfirmingRemoveAll,
+            titleVisibility: .visible
+        ) {
+            Button("Remove All", role: .destructive) { model.removeAllLinks() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Downloaded files are not affected.")
+        }
     }
 
     private var selection: Binding<SidebarItem.ID?> {

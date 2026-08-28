@@ -5,53 +5,72 @@ struct AddLinkSheet: View {
     let model: AppModel
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.fluidAnimation) private var fluidAnimation
     @State private var text = ""
     @State private var isInvalid = false
-    @Environment(\.fluidAnimation) private var fluidAnimation
+    @State private var found: [MegaLink] = []
     @FocusState private var isFocused: Bool
 
-    private var isValid: Bool { MegaLink(text) != nil }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             VStack(alignment: .leading, spacing: 4) {
-                Text("Add a MEGA Link")
+                Text("Add MEGA Links")
                     .font(.headline)
-                Text("Paste a folder or file link. Its key stays on this Mac.")
+                Text("Paste one link or many. Their keys stay on this Mac.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
 
             TextField("https://mega.nz/folder/…#…", text: $text, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
-                .lineLimit(2...4)
+                .lineLimit(3...10)
+                .font(.system(.body, design: .monospaced))
                 .focused($isFocused)
-                .onSubmit(add)
-                .onChange(of: text) { isInvalid = false }
+                .onChange(of: text) {
+                    isInvalid = false
+                    found = MegaLink.links(in: text)
+                }
 
-            Text(isInvalid ? "That does not look like a MEGA link." : " ")
-                .font(.caption)
-                .foregroundStyle(.red)
-                .opacity(isInvalid ? 1 : 0)
+            status
 
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Add", action: add)
+                Button(addTitle, action: add)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(text.isEmpty)
+                    .disabled(found.isEmpty)
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 480)
         .onAppear { isFocused = true }
+        .animation(fluidAnimation, value: found.count)
         .animation(fluidAnimation, value: isInvalid)
     }
 
+    @ViewBuilder
+    private var status: some View {
+        if isInvalid {
+            Label("No MEGA links found in that text.", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.red)
+        } else if found.count > 1 {
+            Label("\(found.count) links found", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            Text(" ").font(.caption)
+        }
+    }
+
+    private var addTitle: String {
+        found.count > 1 ? "Add \(found.count) Links" : "Add"
+    }
+
     private func add() {
-        guard isValid, model.addLink(text) else {
+        guard model.addLinks(text) > 0 else {
             isInvalid = true
             return
         }

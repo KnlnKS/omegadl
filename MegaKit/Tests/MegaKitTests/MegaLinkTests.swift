@@ -85,3 +85,52 @@ import Testing
         #expect(MegaLink(input) == nil)
     }
 }
+
+@Suite struct MultipleLinkParsingTests {
+    private let folder = Live.folderURL
+    private let file = "https://mega.nz/file/AbCdEfGh#\(Base64URL.encode(Data((0..<32).map(UInt8.init))))"
+
+    @Test func `finds one link per line`() {
+        let links = MegaLink.links(in: "\(folder)\n\(file)\n")
+        #expect(links.count == 2)
+        #expect(links[0].handle == Live.folderID)
+        #expect(links[1].handle == "AbCdEfGh")
+    }
+
+    @Test(arguments: [" ", "\n", "\r\n", ", ", "; ", " | ", "\n\n  \n"])
+    func `accepts assorted separators`(separator: String) {
+        #expect(MegaLink.links(in: "\(folder)\(separator)\(file)").count == 2)
+    }
+
+    @Test func `ignores surrounding prose and punctuation`() {
+        let text = "Here you go: \(folder), and also <\(file)>. Enjoy!"
+        let links = MegaLink.links(in: text)
+        #expect(links.count == 2)
+        #expect(links[0].handle == Live.folderID)
+    }
+
+    @Test func `drops duplicates while keeping the first order`() {
+        let links = MegaLink.links(in: "\(file)\n\(folder)\n\(file)\n\(folder)")
+        #expect(links.count == 2)
+        #expect(links[0].handle == "AbCdEfGh")
+        #expect(links[1].handle == Live.folderID)
+    }
+
+    @Test func `skips tokens that are not MEGA links`() {
+        let text = "https://example.com/a\n\(folder)\nnot-a-link\nhttps://mega.nz/folder/broken"
+        let links = MegaLink.links(in: text)
+        #expect(links.count == 1)
+        #expect(links[0].handle == Live.folderID)
+    }
+
+    @Test func `returns nothing for text with no links`() {
+        #expect(MegaLink.links(in: "").isEmpty)
+        #expect(MegaLink.links(in: "just some words, nothing here").isEmpty)
+    }
+
+    @Test func `handles a single link exactly as the initializer does`() {
+        let links = MegaLink.links(in: folder)
+        #expect(links.count == 1)
+        #expect(links[0] == MegaLink(folder))
+    }
+}

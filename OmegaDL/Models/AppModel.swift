@@ -117,17 +117,25 @@ final class AppModel {
     }
 
     @discardableResult
-    func addLink(_ text: String) -> Bool {
-        guard let link = MegaLink(text), let source = try? Source(link: link) else { return false }
-        if let existing = links.first(where: { $0.link == link }) {
-            select(existing.id.uuidString)
-            return true
+    func addLinks(_ text: String) -> Int {
+        let parsed = MegaLink.links(in: text)
+        guard !parsed.isEmpty else { return 0 }
+
+        var firstID: SidebarItem.ID?
+        for link in parsed {
+            if let existing = links.first(where: { $0.link == link }) {
+                firstID = firstID ?? existing.id.uuidString
+                continue
+            }
+            guard let source = try? Source(link: link) else { continue }
+            links.append(source)
+            firstID = firstID ?? source.id.uuidString
+            Task { await source.load() }
         }
-        links.append(source)
-        select(source.id.uuidString)
+
         persistLinks()
-        Task { await source.load() }
-        return true
+        if let firstID { select(firstID) }
+        return parsed.count
     }
 
     func remove(_ source: Source) {

@@ -57,6 +57,17 @@ public struct MegaLink: Sendable, Equatable, Hashable {
         self.selectedHandle = selected
     }
 
+    public static func links(in text: String) -> [MegaLink] {
+        let separators = CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",;|"))
+        let trimmed = CharacterSet(charactersIn: "<>\"'`()[]{}.")
+
+        var seen = Set<MegaLink>()
+        return text.components(separatedBy: separators).compactMap { token in
+            guard let link = MegaLink(token.trimmingCharacters(in: trimmed)) else { return nil }
+            return seen.insert(link).inserted ? link : nil
+        }
+    }
+
     public var url: URL {
         var string = "https://mega.nz/\(kind == .folder ? "folder" : "file")/\(handle)#\(Base64URL.encode(key))"
         if let selectedHandle { string += "/file/\(selectedHandle)" }

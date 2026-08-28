@@ -1,0 +1,45 @@
+name: OmegaDL
+options:
+  bundleIdPrefix: com.omegadl
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+
+packages:
+  MegaKit:
+    path: MegaKit
+
+targets:
+  OmegaDL:
+    type: application
+    platform: macOS
+    sources:
+      - path: OmegaDL
+    dependencies:
+      - package: MegaKit
+        product: MegaKit
+    info:
+      path: OmegaDL/Info.plist
+      properties:
+        CFBundleName: OmegaDL
+        CFBundleDisplayName: OmegaDL
+        CFBundleShortVersionString: "1.0"
+        CFBundleVersion: "1"
+        LSMinimumSystemVersion: "26.0"
+        NSHumanReadableCopyright: ""
+        LSApplicationCategoryType: public.app-category.utilities
+    entitlements:
+      path: OmegaDL/OmegaDL.entitlements
+      properties:
+        com.apple.security.app-sandbox: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.omegadl.OmegaDL
+        SWIFT_VERSION: "6.0"
+        SWIFT_STRICT_CONCURRENCY: complete
+        SWIFT_APPROACHABLE_CONCURRENCY: YES
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Manual
+        ENABLE_HARDENED_RUNTIME: YES
+        MARKETING_VERSION: "1.0"

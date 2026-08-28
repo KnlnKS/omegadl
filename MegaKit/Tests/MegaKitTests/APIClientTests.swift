@@ -65,3 +65,43 @@ private struct DownloadInfo: Decodable, Sendable {
         }
     }
 }
+
+private struct Listing: Decodable, Sendable {
+    let f: [RawNode]
+}
+
+@Suite struct APIResponseDecodingTests {
+    @Test func `unwraps the single-element array MEGA always returns`() throws {
+        let listing: Listing = try APIClient.decode(Data(#"[{"f":[{"h":"AbCdEfGh","t":0}]}]"#.utf8))
+        #expect(listing.f.count == 1)
+        #expect(listing.f[0].h == "AbCdEfGh")
+    }
+
+    @Test func `treats a negative code inside the array as an error`() {
+        #expect(throws: MegaError.api(.notFound)) {
+            let _: Listing = try APIClient.decode(Data("[-9]".utf8))
+        }
+    }
+
+    @Test func `treats a bare negative code as an error`() {
+        #expect(throws: MegaError.api(.badSession)) {
+            let _: Listing = try APIClient.decode(Data("-15".utf8))
+        }
+    }
+
+    @Test func `accepts a zero result as success rather than an error`() throws {
+        #expect(try APIClient.decode(Data("[0]".utf8)) == 0)
+    }
+
+    @Test func `surfaces an unmapped negative code`() {
+        #expect(throws: MegaError.unrecognizedAPICode(-999)) {
+            let _: Listing = try APIClient.decode(Data("[-999]".utf8))
+        }
+    }
+
+    @Test func `rejects a body it cannot read at all`() {
+        #expect(throws: MegaError.malformedResponse) {
+            let _: Listing = try APIClient.decode(Data("[]".utf8))
+        }
+    }
+}

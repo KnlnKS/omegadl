@@ -41,7 +41,7 @@ public actor APIClient {
             do {
                 let data = try await send(body: body, to: url, hashcash: &hashcash)
                 guard let data else { continue }
-                return try decode(data)
+                return try Self.decode(data)
             } catch MegaError.api(.again) where attempt < Self.maxRetries {
                 try await Task.sleep(for: .seconds(1 << (attempt + 1)))
             }
@@ -76,9 +76,9 @@ public actor APIClient {
         return data
     }
 
-    private func decode<Response: Decodable>(_ data: Data) throws -> Response {
+    static func decode<Response: Decodable>(_ data: Data) throws -> Response {
         let decoder = JSONDecoder()
-        if let code = try? decoder.decode(Int.self, from: data) {
+        if let code = try? decoder.decode(Int.self, from: data), code < 0 {
             throw MegaError.apiCode(code)
         }
         guard let first = try? decoder.decode([Envelope<Response>].self, from: data).first else {
@@ -90,13 +90,13 @@ public actor APIClient {
         }
     }
 
-    private enum Envelope<Value: Decodable>: Decodable {
+    enum Envelope<Value: Decodable>: Decodable {
         case success(Value)
         case failure(Int)
 
         init(from decoder: any Decoder) throws {
             let container = try decoder.singleValueContainer()
-            if let code = try? container.decode(Int.self) {
+            if let code = try? container.decode(Int.self), code < 0 {
                 self = .failure(code)
             } else {
                 self = .success(try container.decode(Value.self))

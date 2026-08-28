@@ -28,6 +28,7 @@ targets:
         LSMinimumSystemVersion: "26.0"
         NSHumanReadableCopyright: ""
         LSApplicationCategoryType: public.app-category.utilities
+        CFBundleIconFile: AppIcon
     entitlements:
       path: OmegaDL/OmegaDL.entitlements
       properties:

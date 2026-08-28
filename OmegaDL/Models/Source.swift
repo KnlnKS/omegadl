@@ -88,6 +88,14 @@ final class Source: Identifiable {
         try await session.downloadDescriptor(for: node)
     }
 
+    func move(_ node: MegaNode, to parent: String, recordingOrigin: Bool = false) async throws {
+        try await session.move(node, to: parent, recordingOrigin: recordingOrigin)
+    }
+
+    func delete(_ node: MegaNode) async throws {
+        try await session.delete(node)
+    }
+
     func createFolder(named name: String, in parent: String) async throws -> MegaNode {
         try await session.createFolder(named: name, in: parent)
     }

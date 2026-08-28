@@ -72,13 +72,13 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
     @Test func `sorts directories first then by localized name`() throws {
         let nodes = [
             MegaNode(handle: "c", parentHandle: "r", owner: nil, kind: .file, size: 0,
-                     modified: .distantPast, name: "beta.mp3", key: nil),
+                     modified: .distantPast, name: "beta.mp3", restoreHandle: nil, key: nil),
             MegaNode(handle: "b", parentHandle: "r", owner: nil, kind: .file, size: 0,
-                     modified: .distantPast, name: "Alpha.mp3", key: nil),
+                     modified: .distantPast, name: "Alpha.mp3", restoreHandle: nil, key: nil),
             MegaNode(handle: "d", parentHandle: "r", owner: nil, kind: .folder, size: 0,
-                     modified: .distantPast, name: "zeta", key: nil),
+                     modified: .distantPast, name: "zeta", restoreHandle: nil, key: nil),
             MegaNode(handle: "r", parentHandle: nil, owner: nil, kind: .folder, size: 0,
-                     modified: .distantPast, name: "root", key: nil),
+                     modified: .distantPast, name: "root", restoreHandle: nil, key: nil),
         ]
         #expect(MegaTree(nodes: nodes).children(of: "r").map(\.name) == ["zeta", "Alpha.mp3", "beta.mp3"])
     }

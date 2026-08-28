@@ -9,10 +9,13 @@ struct BrowserView: View {
 
     @State private var selection = Set<MegaNode.ID>()
     @State private var isDropTargeted = false
+    @State private var pendingDeletion: [MegaNode] = []
+    @State private var actionError: String?
     @Environment(\.fluidAnimation) private var fluidAnimation
     @Environment(\.settleAnimation) private var settleAnimation
 
     private var uploadTarget: String? { model.uploadTarget(in: source) }
+    private var isInRubbish: Bool { model.isInRubbish(source) }
 
     var body: some View {
         content
@@ -40,6 +43,24 @@ struct BrowserView: View {
                 if isDropTargeted, uploadTarget != nil {
                     DropIndicator(folder: model.title(for: source))
                 }
+            }
+            .confirmationDialog(
+                deletionPrompt,
+                isPresented: Binding(get: { !pendingDeletion.isEmpty }, set: { if !$0 { pendingDeletion = [] } }),
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) { delete(pendingDeletion) }
+                Button("Cancel", role: .cancel) { pendingDeletion = [] }
+            } message: {
+                Text("This cannot be undone.")
+            }
+            .alert(
+                "Could Not Complete That",
+                isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })
+            ) {
+                Button("OK") { actionError = nil }
+            } message: {
+                Text(actionError ?? "")
             }
     }
 
@@ -112,6 +133,17 @@ struct BrowserView: View {
                     download(chosen)
                 }
             }
+            if isInRubbish, !chosen.isEmpty {
+                Divider()
+                if let target = restoreTarget(for: chosen) {
+                    Button("Put Back") { putBack(chosen) }
+                        .help("Restore to \(target)")
+                }
+                Button("Delete Immediately…", role: .destructive) { pendingDeletion = chosen }
+            } else if source.allowsUpload, !chosen.isEmpty, model.rubbishHandle(in: source) != nil {
+                Divider()
+                Button("Move to Rubbish Bin") { moveToRubbish(chosen) }
+            }
             if uploadTarget != nil {
                 if !chosen.isEmpty { Divider() }
                 uploadButton
@@ -177,6 +209,49 @@ struct BrowserView: View {
 
     private func download(_ nodes: [MegaNode]) {
         model.download(nodes, from: source)
+    }
+
+    private var deletionPrompt: String {
+        pendingDeletion.count == 1
+            ? "Delete “\(pendingDeletion[0].name)” permanently?"
+            : "Delete \(pendingDeletion.count) items permanently?"
+    }
+
+    private func restoreTarget(for nodes: [MegaNode]) -> String? {
+        let targets = nodes.compactMap { model.restoreDestination(for: $0, in: source) }
+        guard targets.count == nodes.count else { return nil }
+        return Set(targets.map(\.name)).count == 1 ? targets[0].name : "their original folders"
+    }
+
+    private func putBack(_ nodes: [MegaNode]) {
+        perform(nodes) { node in
+            guard let target = model.restoreDestination(for: node, in: source) else { return }
+            try await source.move(node, to: target.handle)
+        }
+    }
+
+    private func moveToRubbish(_ nodes: [MegaNode]) {
+        guard let bin = model.rubbishHandle(in: source) else { return }
+        perform(nodes) { node in
+            try await source.move(node, to: bin, recordingOrigin: true)
+        }
+    }
+
+    private func delete(_ nodes: [MegaNode]) {
+        pendingDeletion = []
+        perform(nodes) { node in try await source.delete(node) }
+    }
+
+    private func perform(_ nodes: [MegaNode], _ action: @escaping (MegaNode) async throws -> Void) {
+        Task {
+            do {
+                for node in nodes { try await action(node) }
+            } catch {
+                actionError = error.localizedDescription
+            }
+            selection.removeAll()
+            await source.refresh()
+        }
     }
 
     private func openSelection() {

@@ -30,6 +30,7 @@ public struct MegaNode: Sendable, Identifiable, Hashable {
     public let size: Int
     public let modified: Date
     public let name: String
+    public let restoreHandle: String?
     public let key: Key?
 
     public var id: String { handle }
@@ -106,6 +107,7 @@ public struct NodeDecryptor: Sendable {
         case .folder(let folderKey): folderKey
         case nil: nil as Data?
         }
+        let attributes = attributeKey.flatMap { Self.attributes(from: raw.a, key: $0) }
 
         return MegaNode(
             handle: raw.h,
@@ -114,31 +116,39 @@ public struct NodeDecryptor: Sendable {
             kind: kind,
             size: raw.s ?? 0,
             modified: Date(timeIntervalSince1970: TimeInterval(raw.ts ?? 0)),
-            name: attributeKey.flatMap { Self.name(from: raw.a, key: $0) } ?? kind.standardName ?? raw.h,
+            name: attributes?.n ?? kind.standardName ?? raw.h,
+            restoreHandle: attributes?.rr,
             key: key
         )
     }
 
-    static func encodedAttributes(name: String, key: Data) -> String {
-        struct Attributes: Encodable { let n: String }
-        let json = (try? JSONEncoder().encode(Attributes(n: name))) ?? Data("{}".utf8)
+    struct NodeAttributes: Codable, Sendable {
+        var n: String?
+        var rr: String?
+    }
+
+    static func encodedAttributes(name: String, restoreHandle: String? = nil, key: Data) -> String {
+        let attributes = NodeAttributes(n: name, rr: restoreHandle)
+        let json = (try? JSONEncoder().encode(attributes)) ?? Data("{}".utf8)
 
         var plaintext = Data("MEGA".utf8) + json
         plaintext.append(Data(count: (16 - plaintext.count % 16) % 16))
         return Base64URL.encode(AES128.cbcEncrypt(plaintext, key: key))
     }
 
-    static func name(from attributes: String?, key: Data) -> String? {
-        guard let attributes, let decoded = Base64URL.decode(attributes),
+    static func attributes(from encoded: String?, key: Data) -> NodeAttributes? {
+        guard let encoded, let decoded = Base64URL.decode(encoded),
               !decoded.isEmpty, decoded.count % 16 == 0
         else { return nil }
 
         let plaintext = AES128.cbcDecrypt(decoded, key: key).prefix { $0 != 0 }
         guard plaintext.starts(with: Data("MEGA{".utf8)) else { return nil }
 
-        struct Attributes: Decodable { let n: String? }
-        let json = Data(plaintext.dropFirst(4))
-        return (try? JSONDecoder().decode(Attributes.self, from: json))?.n
+        return try? JSONDecoder().decode(NodeAttributes.self, from: Data(plaintext.dropFirst(4)))
+    }
+
+    static func name(from encoded: String?, key: Data) -> String? {
+        attributes(from: encoded, key: key)?.n
     }
 }
 

@@ -66,6 +66,7 @@ public actor MegaSession {
                 size: response.s,
                 modified: .now,
                 name: NodeDecryptor.name(from: response.at, key: key.aesKey) ?? handle,
+                restoreHandle: nil,
                 key: .file(key)
             )
             return MegaTree(nodes: [node])
@@ -129,6 +130,29 @@ public actor MegaSession {
             k: Base64URL.encode(AES128.ecbEncrypt(key, key: account.masterKey))
         )
         return try await commit(node, to: parent)
+    }
+
+    public func move(_ node: MegaNode, to parent: String, recordingOrigin: Bool = false) async throws {
+        guard case .account = context else { throw MegaError.notAuthenticated }
+
+        if recordingOrigin, let origin = node.parentHandle {
+            try await setRestoreHandle(origin, on: node)
+        }
+        let _: Int = try await api.request(MoveCommand(n: node.handle, t: parent))
+    }
+
+    private func setRestoreHandle(_ origin: String, on node: MegaNode) async throws {
+        let attributeKey: Data
+        switch node.key {
+        case .file(let key): attributeKey = key.aesKey
+        case .folder(let key): attributeKey = key
+        case nil: throw MegaError.decryptionFailed
+        }
+
+        let encoded = NodeDecryptor.encodedAttributes(
+            name: node.name, restoreHandle: origin, key: attributeKey
+        )
+        let _: Int = try await api.request(SetAttributesCommand(n: node.handle, at: encoded))
     }
 
     public func delete(_ node: MegaNode) async throws {

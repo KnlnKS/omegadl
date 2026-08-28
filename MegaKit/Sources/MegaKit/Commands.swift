@@ -83,3 +83,15 @@ struct DeleteCommand: Encodable, Sendable {
     let a = "d"
     let n: String
 }
+
+struct MoveCommand: Encodable, Sendable {
+    let a = "m"
+    let n: String
+    let t: String
+}
+
+struct SetAttributesCommand: Encodable, Sendable {
+    let a = "a"
+    let n: String
+    let at: String
+}

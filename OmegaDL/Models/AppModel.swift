@@ -180,6 +180,22 @@ final class AppModel {
         return folder
     }
 
+    func isInRubbish(_ source: Source) -> Bool {
+        guard let folder, let tree = source.tree else { return false }
+        return tree.path(to: folder).first?.kind == .rubbish
+    }
+
+    func rubbishHandle(in source: Source) -> String? {
+        source.tree?.roots.first { $0.kind == .rubbish }?.handle
+    }
+
+    func restoreDestination(for node: MegaNode, in source: Source) -> MegaNode? {
+        guard let handle = node.restoreHandle, let target = source.tree?.node(handle),
+              target.isDirectory, source.tree?.path(to: handle).first?.kind != .rubbish
+        else { return nil }
+        return target
+    }
+
     func title(for source: Source) -> String {
         guard let folder, let node = source.tree?.node(folder) else { return source.name }
         return node.name

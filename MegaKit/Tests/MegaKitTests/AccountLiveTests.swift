@@ -39,6 +39,44 @@ private let accountOnly: ConditionTrait = .enabled(
     }
 
     @Test(accountOnly, .timeLimit(.minutes(5)))
+    func `moves a file to the rubbish bin, puts it back, then deletes it`() async throws {
+        let (session, tree) = try await signedIn()
+        let drive = try #require(tree.roots.first { $0.kind == .root })
+        let rubbish = try #require(tree.roots.first { $0.kind == .rubbish })
+
+        let scratch = FileManager.default.temporaryDirectory.appending(path: "rb-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+
+        let folder = try await session.createFolder(named: "OmegaDL Rubbish Test", in: drive.handle)
+        let local = scratch.appending(path: "discard.bin")
+        try Data(repeating: 3, count: 4096).write(to: local)
+        let uploaded = try await session.upload(fileAt: local, as: "discard.bin", to: folder.handle)
+
+        try await session.move(uploaded, to: rubbish.handle, recordingOrigin: true)
+
+        let trashed = try await session.loadTree()
+        let inBin = try #require(trashed.node(uploaded.handle))
+        #expect(inBin.parentHandle == rubbish.handle)
+        #expect(inBin.restoreHandle == folder.handle)
+        #expect(inBin.name == "discard.bin")
+        #expect(trashed.children(of: rubbish.handle).contains { $0.handle == uploaded.handle })
+
+        try await session.move(inBin, to: try #require(inBin.restoreHandle))
+
+        let restored = try await session.loadTree()
+        let back = try #require(restored.node(uploaded.handle))
+        #expect(back.parentHandle == folder.handle)
+        #expect(!restored.children(of: rubbish.handle).contains { $0.handle == uploaded.handle })
+
+        try await session.delete(back)
+        let purged = try await session.loadTree()
+        #expect(purged.node(uploaded.handle) == nil)
+
+        try await session.delete(try #require(purged.node(folder.handle)))
+    }
+
+    @Test(accountOnly, .timeLimit(.minutes(5)))
     func `uploads a folder and file, downloads it back, then cleans up`() async throws {
         let (session, tree) = try await signedIn()
         let drive = try #require(tree.roots.first { $0.kind == .root })

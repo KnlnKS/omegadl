@@ -43,6 +43,7 @@ public enum MegaError: Error, Sendable, Hashable {
     case integrityCheckFailed
     case notAuthenticated
     case proofOfWorkFailed
+    case diskWriteFailed
 
     static func apiCode(_ code: Int) -> MegaError {
         MegaAPIError(rawValue: code).map(MegaError.api) ?? .unrecognizedAPICode(code)
@@ -69,6 +70,7 @@ extension MegaError: LocalizedError {
         case .integrityCheckFailed: "The downloaded data failed its integrity check."
         case .notAuthenticated: "Sign in to do that."
         case .proofOfWorkFailed: "Could not satisfy MEGA's anti-abuse challenge."
+        case .diskWriteFailed: "OmegaDL could not write to the destination folder."
         }
     }
 }

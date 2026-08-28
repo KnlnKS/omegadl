@@ -22,6 +22,7 @@ struct ShareKeyEntry: Decodable, Sendable {
 struct DownloadCommand: Encodable, Sendable {
     let a = "g"
     let g: Int
+    let ssl = 2
     let n: String?
     let p: String?
 

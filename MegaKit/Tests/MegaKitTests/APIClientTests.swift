@@ -23,6 +23,7 @@ private struct RawListing: Decodable, Sendable {
 private struct DownloadCommand: Encodable, Sendable {
     let a = "g"
     let g = 1
+    let ssl = 2
     let n: String
 }
 
@@ -52,7 +53,7 @@ private struct DownloadInfo: Decodable, Sendable {
 
         let info: DownloadInfo = try await client.request(DownloadCommand(n: Live.smallFileHandle))
         #expect(info.s == Live.smallFileSize)
-        #expect(info.g.hasPrefix("http"))
+        #expect(info.g.hasPrefix("https://"))
     }
 
     @Test(liveOnly) func `surfaces a MEGA error code as a typed error`() async throws {

@@ -49,14 +49,14 @@ struct TransfersList: View {
                     .frame(height: 180)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    VStack(spacing: 0) {
                         ForEach(manager.transfers) { transfer in
                             TransferRow(transfer: transfer, manager: manager)
                             Divider().padding(.leading, 12)
                         }
                     }
                 }
-                .frame(maxHeight: 320)
+                .frame(height: min(320, Double(manager.transfers.count) * 58))
             }
         }
         .frame(width: 380)
@@ -124,11 +124,10 @@ private struct TransferRow: View {
         case .queued:
             "Waiting — \(transfer.size.formatted(.byteCount(style: .file)))"
         case .running:
-            "\(transfer.bytesCompleted.formatted(.byteCount(style: .file))) of "
-                + "\(transfer.size.formatted(.byteCount(style: .file)))"
+            "\(byteText(transfer.bytesCompleted)) of \(byteText(transfer.size))"
                 + (transfer.bytesPerSecond > 0 ? " — \(rateText(transfer.bytesPerSecond))" : "")
         case .completed:
-            transfer.size.formatted(.byteCount(style: .file))
+            byteText(transfer.size)
         case .cancelled:
             "Cancelled"
         case .failed(let message):
@@ -172,8 +171,12 @@ private struct TransferRow: View {
     }
 }
 
+func byteText(_ bytes: Int) -> String {
+    bytes.formatted(.byteCount(style: .file, allowedUnits: .all, spellsOutZero: false))
+}
+
 func rateText(_ bytesPerSecond: Double) -> String {
-    "\(Int(bytesPerSecond).formatted(.byteCount(style: .file)))/s"
+    "\(byteText(Int(bytesPerSecond)))/s"
 }
 
 extension Text {

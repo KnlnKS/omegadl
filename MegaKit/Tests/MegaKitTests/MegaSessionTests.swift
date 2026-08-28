@@ -22,7 +22,7 @@ import Testing
         #expect(descriptor.size == Live.smallFileSize)
         #expect(descriptor.name == Live.smallFileName)
         #expect(descriptor.key.metaMAC.count == 8)
-        #expect(descriptor.url.scheme?.hasPrefix("http") == true)
+        #expect(descriptor.url.scheme == "https")
     }
 
     @Test(liveOnly) func `refuses a download descriptor for a folder`() async throws {

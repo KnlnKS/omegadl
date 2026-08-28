@@ -64,7 +64,7 @@ public actor MegaSession {
         }
 
         let response: DownloadResponse = try await api.request(command)
-        guard let link = response.g, let url = URL(string: link), url.scheme?.hasPrefix("http") == true else {
+        guard let link = response.g, let url = URL(string: link), url.scheme == "https" else {
             throw MegaError.malformedResponse
         }
         return DownloadDescriptor(url: url, size: response.s, key: key, name: node.name)

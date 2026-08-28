@@ -10,9 +10,20 @@ struct BrowserView: View {
 
     private var breadcrumbs: [MegaNode] { model.breadcrumbs(in: source) }
 
+    private var subtitle: String {
+        guard source.status == .loaded else { return "" }
+        let items = model.contents(of: source)
+        return switch items.count {
+        case 0: ""
+        case 1: "1 item"
+        default: "\(items.count) items"
+        }
+    }
+
     var body: some View {
         content
             .navigationTitle(breadcrumbs.last?.name ?? source.name)
+            .navigationSubtitle(subtitle)
             .task { await source.load() }
             .toolbar { toolbar }
     }
@@ -54,12 +65,12 @@ struct BrowserView: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-            .width(min: 70, ideal: 90)
+            .width(min: 64, ideal: 76)
             TableColumn("Modified") { node in
                 Text(node.modified.formatted(date: .abbreviated, time: .shortened))
                     .foregroundStyle(.secondary)
             }
-            .width(min: 120, ideal: 170)
+            .width(min: 110, ideal: 130)
         }
         .contextMenu(forSelectionType: MegaNode.ID.self) { ids in
             let chosen = items.filter { ids.contains($0.id) }
@@ -86,13 +97,13 @@ struct BrowserView: View {
             .help("Enclosing Folder")
         }
         ToolbarItem(placement: .navigation) {
-            BreadcrumbBar(nodes: breadcrumbs) { model.currentFolder = $0.handle }
+            BreadcrumbBar(ancestors: breadcrumbs.dropLast()) { model.currentFolder = $0.handle }
         }
         ToolbarItem {
             Button {
                 download(model.contents(of: source).filter { selection.contains($0.id) })
             } label: {
-                Label("Download", systemImage: "arrow.down")
+                Label("Download", systemImage: "arrow.down.to.line")
             }
             .disabled(selection.isEmpty)
             .help("Download Selection")
@@ -119,25 +130,25 @@ struct BrowserView: View {
 }
 
 struct BreadcrumbBar: View {
-    let nodes: [MegaNode]
+    let ancestors: [MegaNode].SubSequence
     let onSelect: (MegaNode) -> Void
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(nodes.enumerated()), id: \.element.id) { index, node in
-                if index > 0 {
-                    Image(systemName: "chevron.compact.right")
-                        .foregroundStyle(.tertiary)
-                }
+        HStack(spacing: 1) {
+            ForEach(ancestors) { node in
                 Button {
                     onSelect(node)
                 } label: {
                     Text(node.name)
                         .lineLimit(1)
-                        .fontWeight(index == nodes.count - 1 ? .semibold : .regular)
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.accessoryBar)
-                .disabled(index == nodes.count - 1)
+
+                Image(systemName: "chevron.compact.right")
+                    .foregroundStyle(.tertiary)
+                    .font(.caption)
             }
         }
     }

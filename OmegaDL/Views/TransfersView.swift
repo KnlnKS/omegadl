@@ -3,11 +3,11 @@ import SwiftUI
 
 struct TransfersButton: View {
     let manager: TransferManager
-    @State private var isPresented = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button {
-            isPresented.toggle()
+            openWindow(id: TransfersWindow.id)
         } label: {
             Label("Transfers", systemImage: "arrow.down.circle")
                 .overlay(alignment: .center) {
@@ -22,9 +22,6 @@ struct TransfersButton: View {
                 ? "Transfers"
                 : "Transfers, \(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
         )
-        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-            TransfersList(manager: manager)
-        }
     }
 }
 
@@ -43,55 +40,61 @@ private struct TransferRing: View {
     }
 }
 
-struct TransfersList: View {
+struct TransfersWindow: View {
+    static let id = "transfers"
+
     let manager: TransferManager
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-
-            if manager.transfers.isEmpty && !manager.isPreparing {
-                ContentUnavailableView("No Transfers", systemImage: "arrow.down.circle")
-                    .frame(height: 180)
-            } else {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(manager.transfers) { transfer in
-                            TransferRow(transfer: transfer, manager: manager)
-                            Divider().padding(.leading, 12)
-                        }
-                    }
-                }
-                .frame(height: min(320, Double(manager.transfers.count) * 58))
-            }
-        }
-        .frame(width: 380)
+    private var finishedCount: Int {
+        manager.transfers.count { $0.isFinished }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Transfers").font(.headline)
-            Spacer()
-            if manager.aggregateBytesPerSecond > 0 {
-                Text(rate: manager.aggregateBytesPerSecond)
-                    .font(.caption)
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
+    var body: some View {
+        content
+            .frame(minWidth: 420, minHeight: 240)
+            .navigationTitle("Transfers")
+            .navigationSubtitle(subtitle)
+            .toolbar {
+                ToolbarItem {
+                    Button("Clear") { manager.clearFinished() }
+                        .disabled(finishedCount == 0)
+                        .help("Remove finished transfers from the list")
+                }
             }
-            if manager.isPreparing {
-                ProgressView().controlSize(.small)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if manager.transfers.isEmpty {
+            ContentUnavailableView {
+                Label("No Transfers", systemImage: "arrow.down.circle")
+            } description: {
+                Text("Downloads and uploads appear here while they run.")
             }
-            Button("Clear") { manager.clearFinished() }
-                .buttonStyle(.accessoryBar)
-                .disabled(!manager.transfers.contains { $0.isFinished })
+        } else {
+            List {
+                ForEach(manager.transfers) { transfer in
+                    TransferRow(transfer: transfer, manager: manager)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 8, bottom: 6, trailing: 8))
+                }
+            }
+            .listStyle(.inset)
+            .alternatingRowBackgrounds()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+    }
+
+    private var subtitle: String {
+        let active = manager.activeCount
+        guard active > 0 else {
+            return finishedCount == 0 ? "" : "\(finishedCount) finished"
+        }
+        let rate = manager.aggregateBytesPerSecond
+        let label = active == 1 ? "1 active" : "\(active) active"
+        return rate > 0 ? "\(label) — \(rateText(rate))" : label
     }
 }
 
-private struct TransferRow: View {
+struct TransferRow: View {
     let transfer: Transfer
     let manager: TransferManager
 
@@ -213,10 +216,4 @@ func byteText(_ bytes: Int) -> String {
 
 func rateText(_ bytesPerSecond: Double) -> String {
     "\(byteText(Int(bytesPerSecond)))/s"
-}
-
-extension Text {
-    init(rate bytesPerSecond: Double) {
-        self.init(rateText(bytesPerSecond))
-    }
 }

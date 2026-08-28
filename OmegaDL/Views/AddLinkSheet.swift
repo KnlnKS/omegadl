@@ -7,6 +7,7 @@ struct AddLinkSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var isInvalid = false
+    @Environment(\.fluidAnimation) private var fluidAnimation
     @FocusState private var isFocused: Bool
 
     private var isValid: Bool { MegaLink(text) != nil }
@@ -46,7 +47,7 @@ struct AddLinkSheet: View {
         .padding(20)
         .frame(width: 440)
         .onAppear { isFocused = true }
-        .animation(.spring(duration: 0.3, bounce: 0), value: isInvalid)
+        .animation(fluidAnimation, value: isInvalid)
     }
 
     private func add() {

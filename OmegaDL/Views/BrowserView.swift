@@ -8,6 +8,8 @@ struct BrowserView: View {
 
     @State private var selection = Set<MegaNode.ID>()
     @State private var isDropTargeted = false
+    @Environment(\.fluidAnimation) private var fluidAnimation
+    @Environment(\.settleAnimation) private var settleAnimation
 
     private var breadcrumbs: [MegaNode] { model.breadcrumbs(in: source) }
 
@@ -26,7 +28,7 @@ struct BrowserView: View {
             .navigationTitle(breadcrumbs.last?.name ?? source.name)
             .navigationSubtitle(subtitle)
             .dropDestination(for: URL.self) { urls, _ in accept(urls) } isTargeted: { targeted in
-                withAnimation(.spring(duration: 0.25, bounce: 0)) { isDropTargeted = targeted }
+                withAnimation(settleAnimation) { isDropTargeted = targeted }
             }
             .overlay {
                 if isDropTargeted, model.uploadTarget(in: source) != nil {
@@ -35,6 +37,12 @@ struct BrowserView: View {
             }
             .task { await source.load() }
             .toolbar { toolbar }
+            .background {
+                Button("Open Selection") { openSelection() }
+                    .keyboardShortcut(.downArrow, modifiers: .command)
+                    .opacity(0)
+                    .accessibilityHidden(true)
+            }
     }
 
     @ViewBuilder
@@ -68,6 +76,11 @@ struct BrowserView: View {
         Table(items, selection: $selection) {
             TableColumn("Name") { node in
                 NodeLabel(node: node)
+                    .accessibilityLabel(
+                        node.isDirectory
+                            ? "\(node.name), folder"
+                            : "\(node.name), \(node.size.formatted(.byteCount(style: .file)))"
+                    )
             }
             TableColumn("Size") { node in
                 Text(node.isDirectory ? "—" : node.size.formatted(.byteCount(style: .file)))
@@ -103,6 +116,7 @@ struct BrowserView: View {
                 Label("Back", systemImage: "chevron.left")
             }
             .disabled(model.currentFolder == nil)
+            .keyboardShortcut(.upArrow, modifiers: .command)
             .help("Enclosing Folder")
         }
         ToolbarItem(placement: .navigation) {
@@ -115,6 +129,7 @@ struct BrowserView: View {
                 Label("Download", systemImage: "arrow.down.to.line")
             }
             .disabled(selection.isEmpty)
+            .keyboardShortcut("d", modifiers: .command)
             .help("Download Selection")
         }
         ToolbarItem {
@@ -124,10 +139,18 @@ struct BrowserView: View {
                 Label("Upload", systemImage: "arrow.up.to.line")
             }
             .disabled(model.uploadTarget(in: source) == nil)
+            .keyboardShortcut("u", modifiers: .command)
             .help(source.allowsUpload ? "Upload to This Folder" : "Sign in to upload")
         }
         ToolbarItem {
             TransfersButton(manager: model.transfers)
+        }
+    }
+
+    private func openSelection() {
+        let items = model.contents(of: source)
+        if let node = items.first(where: { selection.contains($0.id) }), node.isDirectory {
+            open(node)
         }
     }
 
@@ -160,7 +183,7 @@ struct BrowserView: View {
 
     private func open(_ node: MegaNode) {
         guard node.isDirectory else { return }
-        withAnimation(.spring(duration: 0.3, bounce: 0)) {
+        withAnimation(fluidAnimation) {
             model.open(node)
         }
         selection.removeAll()

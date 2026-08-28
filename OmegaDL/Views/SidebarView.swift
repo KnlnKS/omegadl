@@ -43,6 +43,7 @@ struct SidebarView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.accessoryBar)
+            .keyboardShortcut("l", modifiers: .command)
             .padding(8)
         }
         .onChange(of: model.selectedSourceID) {

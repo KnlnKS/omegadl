@@ -17,6 +17,11 @@ struct TransfersButton: View {
                 }
         }
         .help("Transfers")
+        .accessibilityLabel(
+            manager.activeCount == 0
+                ? "Transfers"
+                : "Transfers, \(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
+        )
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             TransfersList(manager: manager)
         }
@@ -25,6 +30,7 @@ struct TransfersButton: View {
 
 private struct TransferRing: View {
     let fraction: Double
+    @Environment(\.fluidAnimation) private var fluidAnimation
 
     var body: some View {
         Circle()
@@ -32,7 +38,8 @@ private struct TransferRing: View {
             .stroke(.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
             .rotationEffect(.degrees(-90))
             .frame(width: 15, height: 15)
-            .animation(.spring(duration: 0.35, bounce: 0), value: fraction)
+            .animation(fluidAnimation, value: fraction)
+            .accessibilityHidden(true)
     }
 }
 
@@ -126,6 +133,9 @@ private struct TransferRow: View {
         .onTapGesture(count: 2) {
             if transfer.state == .completed { manager.revealInFinder(transfer) }
         }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(transfer.isUpload ? "Upload" : "Download"), \(transfer.name)")
+        .accessibilityValue(status)
     }
 
     private var status: String {

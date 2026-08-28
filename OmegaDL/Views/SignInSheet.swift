@@ -12,6 +12,7 @@ struct SignInSheet: View {
     @State private var isWorking = false
     @State private var errorMessage: String?
     @FocusState private var focus: Field?
+    @Environment(\.fluidAnimation) private var fluidAnimation
 
     private enum Field {
         case email
@@ -87,8 +88,8 @@ struct SignInSheet: View {
         .padding(20)
         .frame(width: 420)
         .onAppear { focus = .email }
-        .animation(.spring(duration: 0.3, bounce: 0), value: needsSecondFactor)
-        .animation(.spring(duration: 0.3, bounce: 0), value: errorMessage)
+        .animation(fluidAnimation, value: needsSecondFactor)
+        .animation(fluidAnimation, value: errorMessage)
     }
 
     private func submit() {

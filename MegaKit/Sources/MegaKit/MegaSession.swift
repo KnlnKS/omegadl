@@ -41,12 +41,12 @@ public actor MegaSession {
         switch context {
         case .publicFolder(let handle):
             await api.setFolderID(handle)
-            let response: FilesResponse = try await api.request(FilesCommand())
+            let response: FilesResponse = try await api.request(FilesCommand(scopedToFolderLink: true))
             return MegaTree(nodes: response.f.compactMap(decryptor.decrypt))
 
         case .account(let account):
             await api.setSessionID(account.sessionID)
-            let response: FilesResponse = try await api.request(FilesCommand())
+            let response: FilesResponse = try await api.request(FilesCommand(scopedToFolderLink: false))
             decryptor = .account(
                 userHandle: account.userHandle,
                 masterKey: account.masterKey,

@@ -62,6 +62,11 @@ private let accountOnly: ConditionTrait = .enabled(
         #expect(uploaded.size == payload.count)
         #expect(uploaded.fileKey != nil)
 
+        let reloaded = try await session.loadTree()
+        #expect(reloaded.node(folder.handle) != nil)
+        #expect(reloaded.node(uploaded.handle)?.name == "omegadl-upload-test.bin")
+        #expect(reloaded.children(of: folder.handle).map(\.handle) == [uploaded.handle])
+
         let descriptor = try await session.downloadDescriptor(for: uploaded)
         let destination = scratch.appending(path: "roundtrip.bin")
         try await DownloadEngine().download(descriptor, to: destination)

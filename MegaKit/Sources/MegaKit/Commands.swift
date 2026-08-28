@@ -3,8 +3,12 @@ import Foundation
 struct FilesCommand: Encodable, Sendable {
     let a = "f"
     let c = 1
-    let ca = 1
     let r = 1
+    let ca: Int?
+
+    init(scopedToFolderLink: Bool) {
+        self.ca = scopedToFolderLink ? 1 : nil
+    }
 }
 
 struct FilesResponse: Decodable, Sendable {

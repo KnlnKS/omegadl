@@ -33,6 +33,14 @@ final class AppModel {
         (account.map { [$0] } ?? []) + links
     }
 
+    func loadAllSources() async {
+        await withTaskGroup(of: Void.self) { group in
+            for source in sources {
+                group.addTask { await source.load() }
+            }
+        }
+    }
+
     var selectedSource: Source? {
         sources.first { $0.id == selectedSourceID }
     }

@@ -23,6 +23,7 @@ struct ContentView: View {
                 }
             }
         }
+        .task { await model.loadAllSources() }
         .sheet(isPresented: Bindable(model).isAddingLink) {
             AddLinkSheet(model: model)
         }

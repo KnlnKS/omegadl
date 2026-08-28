@@ -87,6 +87,63 @@ public actor MegaSession {
         return DownloadDescriptor(url: url, size: response.s, key: key, name: node.name)
     }
 
+    public func upload(
+        fileAt source: URL,
+        as name: String,
+        to parent: String,
+        engine: UploadEngine = UploadEngine(),
+        onProgress: @Sendable (Int) -> Void = { _ in }
+    ) async throws -> MegaNode {
+        guard case .account(let account) = context else { throw MegaError.notAuthenticated }
+
+        let size = (try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int) ?? 0
+        let ticket: UploadResponse = try await api.request(UploadCommand(s: size))
+        guard let uploadURL = URL(string: ticket.p), uploadURL.scheme == "https" else {
+            throw MegaError.malformedResponse
+        }
+
+        let key = Data.random(count: 16)
+        let nonce = Data.random(count: 8)
+        let result = try await engine.transmit(
+            fileAt: source, to: uploadURL, key: key, nonce: nonce, size: size, onProgress: onProgress
+        )
+
+        let fileKey = MegaFileKey(aesKey: key, nonce: nonce, metaMAC: result.metaMAC)
+        let node = NewNode(
+            h: result.token,
+            t: MegaNode.Kind.file.rawValue,
+            a: NodeDecryptor.encodedAttributes(name: name, key: key),
+            k: Base64URL.encode(AES128.ecbEncrypt(fileKey.packed, key: account.masterKey))
+        )
+        return try await commit(node, to: parent)
+    }
+
+    public func createFolder(named name: String, in parent: String) async throws -> MegaNode {
+        guard case .account(let account) = context else { throw MegaError.notAuthenticated }
+
+        let key = Data.random(count: 16)
+        let node = NewNode(
+            h: "xxxxxxxx",
+            t: MegaNode.Kind.folder.rawValue,
+            a: NodeDecryptor.encodedAttributes(name: name, key: key),
+            k: Base64URL.encode(AES128.ecbEncrypt(key, key: account.masterKey))
+        )
+        return try await commit(node, to: parent)
+    }
+
+    public func delete(_ node: MegaNode) async throws {
+        guard case .account = context else { throw MegaError.notAuthenticated }
+        let _: Int = try await api.request(DeleteCommand(n: node.handle))
+    }
+
+    private func commit(_ node: NewNode, to parent: String) async throws -> MegaNode {
+        let response: PutResponse = try await api.request(PutCommand(t: parent, n: [node]))
+        guard let created = response.f.first.flatMap(decryptor.decrypt) else {
+            throw MegaError.malformedResponse
+        }
+        return created
+    }
+
     static func shareKeys(from entries: [ShareKeyEntry]?, masterKey: Data) -> [String: Data] {
         var keys = [String: Data]()
         for entry in entries ?? [] {

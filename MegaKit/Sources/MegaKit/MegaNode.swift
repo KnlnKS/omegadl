@@ -119,6 +119,15 @@ public struct NodeDecryptor: Sendable {
         )
     }
 
+    static func encodedAttributes(name: String, key: Data) -> String {
+        struct Attributes: Encodable { let n: String }
+        let json = (try? JSONEncoder().encode(Attributes(n: name))) ?? Data("{}".utf8)
+
+        var plaintext = Data("MEGA".utf8) + json
+        plaintext.append(Data(count: (16 - plaintext.count % 16) % 16))
+        return Base64URL.encode(AES128.cbcEncrypt(plaintext, key: key))
+    }
+
     static func name(from attributes: String?, key: Data) -> String? {
         guard let attributes, let decoded = Base64URL.decode(attributes),
               !decoded.isEmpty, decoded.count % 16 == 0

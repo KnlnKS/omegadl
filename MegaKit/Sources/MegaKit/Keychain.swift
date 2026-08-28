@@ -44,6 +44,11 @@ public enum Keychain {
         return try? JSONDecoder().decode(AccountSession.self, from: data)
     }
 
+    @concurrent
+    public static func storedSession(email: String) async -> AccountSession? {
+        session(email: email)
+    }
+
     public static func remove(email: String) {
         SecItemDelete([
             kSecClass as String: kSecClassGenericPassword,

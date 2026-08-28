@@ -1,6 +1,7 @@
-import UniformTypeIdentifiers
+import AppKit
 import MegaKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct BrowserView: View {
     @Bindable var model: AppModel
@@ -11,26 +12,34 @@ struct BrowserView: View {
     @Environment(\.fluidAnimation) private var fluidAnimation
     @Environment(\.settleAnimation) private var settleAnimation
 
-    private var breadcrumbs: [MegaNode] { model.breadcrumbs(in: source) }
+    private var uploadTarget: String? { model.uploadTarget(in: source) }
 
     var body: some View {
         content
-            .navigationTitle(breadcrumbs.last?.name ?? source.name)
+            .navigationTitle(model.title(for: source))
+            .task { await source.load() }
+            .toolbar { toolbar }
+            .background {
+                Group {
+                    Button("Open Selection") { openSelection() }
+                        .keyboardShortcut(.downArrow, modifiers: .command)
+                    Button("Download Selection") { download(selectedNodes) }
+                        .keyboardShortcut("d", modifiers: .command)
+                        .disabled(selection.isEmpty)
+                    Button("Upload") { chooseUploads() }
+                        .keyboardShortcut("u", modifiers: .command)
+                        .disabled(uploadTarget == nil)
+                }
+                .opacity(0)
+                .accessibilityHidden(true)
+            }
             .dropDestination(for: URL.self) { urls, _ in accept(urls) } isTargeted: { targeted in
                 withAnimation(settleAnimation) { isDropTargeted = targeted }
             }
             .overlay {
-                if isDropTargeted, model.uploadTarget(in: source) != nil {
-                    DropIndicator(folder: breadcrumbs.last?.name ?? source.name)
+                if isDropTargeted, uploadTarget != nil {
+                    DropIndicator(folder: model.title(for: source))
                 }
-            }
-            .task { await source.load() }
-            .toolbar { toolbar }
-            .background {
-                Button("Open Selection") { openSelection() }
-                    .keyboardShortcut(.downArrow, modifiers: .command)
-                    .opacity(0)
-                    .accessibilityHidden(true)
             }
     }
 
@@ -54,10 +63,23 @@ struct BrowserView: View {
         case .loaded:
             let items = model.contents(of: source)
             if items.isEmpty {
-                ContentUnavailableView("Empty Folder", systemImage: "folder")
+                emptyFolder
             } else {
                 table(items)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyFolder: some View {
+        let view = ContentUnavailableView("Empty Folder", systemImage: "folder")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(.rect)
+
+        if uploadTarget != nil {
+            view.contextMenu { uploadButton }
+        } else {
+            view
         }
     }
 
@@ -85,15 +107,24 @@ struct BrowserView: View {
         }
         .contextMenu(forSelectionType: MegaNode.ID.self) { ids in
             let chosen = items.filter { ids.contains($0.id) }
-            Button(chosen.count > 1 ? "Download \(chosen.count) Items" : "Download") {
-                download(chosen)
+            if !chosen.isEmpty {
+                Button(chosen.count > 1 ? "Download \(chosen.count) Items" : "Download") {
+                    download(chosen)
+                }
             }
-            .disabled(chosen.isEmpty)
+            if uploadTarget != nil {
+                if !chosen.isEmpty { Divider() }
+                uploadButton
+            }
         } primaryAction: { ids in
             if let node = items.first(where: { ids.contains($0.id) }) {
                 open(node)
             }
         }
+    }
+
+    private var uploadButton: some View {
+        Button("Upload…") { chooseUploads() }
     }
 
     @ToolbarContentBuilder
@@ -104,64 +135,57 @@ struct BrowserView: View {
             } label: {
                 Label("Back", systemImage: "chevron.left")
             }
-            .disabled(model.currentFolder == nil)
+            .disabled(!model.canGoUp)
             .keyboardShortcut(.upArrow, modifiers: .command)
             .help("Enclosing Folder")
         }
-        ToolbarItem {
+        ToolbarItem(placement: .navigation) {
             Button {
-                download(model.contents(of: source).filter { selection.contains($0.id) })
+                Task { await source.refresh() }
             } label: {
-                Label("Download", systemImage: "arrow.down.to.line")
+                Label("Refresh", systemImage: "arrow.clockwise")
             }
-            .disabled(selection.isEmpty)
-            .keyboardShortcut("d", modifiers: .command)
-            .help("Download Selection")
-        }
-        ToolbarItem {
-            Button {
-                chooseUploads()
-            } label: {
-                Label("Upload", systemImage: "arrow.up.to.line")
-            }
-            .disabled(model.uploadTarget(in: source) == nil)
-            .keyboardShortcut("u", modifiers: .command)
-            .help(source.allowsUpload ? "Upload to This Folder" : "Sign in to upload")
+            .disabled(source.isRefreshing || source.status != .loaded)
+            .keyboardShortcut("r", modifiers: .command)
+            .help("Refresh")
         }
         ToolbarItem {
             TransfersButton(manager: model.transfers)
         }
     }
 
-    private func openSelection() {
-        let items = model.contents(of: source)
-        if let node = items.first(where: { selection.contains($0.id) }), node.isDirectory {
-            open(node)
-        }
+    private var selectedNodes: [MegaNode] {
+        model.contents(of: source).filter { selection.contains($0.id) }
     }
 
     private func chooseUploads() {
-        guard let parent = model.uploadTarget(in: source) else { return }
+        guard let parent = uploadTarget else { return }
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Upload"
-        panel.message = "Choose files or folders to upload to \(breadcrumbs.last?.name ?? source.name)."
+        panel.message = "Choose files or folders to upload to \(model.title(for: source))."
 
         guard panel.runModal() == .OK else { return }
         model.transfers.upload(panel.urls, to: source, parent: parent)
     }
 
     private func accept(_ urls: [URL]) -> Bool {
-        guard let parent = model.uploadTarget(in: source) else { return false }
+        guard let parent = uploadTarget else { return false }
         model.transfers.upload(urls, to: source, parent: parent)
         return true
     }
 
     private func download(_ nodes: [MegaNode]) {
         model.download(nodes, from: source)
+    }
+
+    private func openSelection() {
+        if let node = selectedNodes.first, node.isDirectory {
+            open(node)
+        }
     }
 
     private func open(_ node: MegaNode) {

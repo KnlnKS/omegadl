@@ -2,7 +2,7 @@ import MegaKit
 import SwiftUI
 
 struct ContentView: View {
-    @State private var model = AppModel()
+    @Bindable var model: AppModel
 
     var body: some View {
         NavigationSplitView {
@@ -10,7 +10,7 @@ struct ContentView: View {
         } detail: {
             if let source = model.selectedSource {
                 BrowserView(model: model, source: source)
-                    .id(source.id)
+                    .id(model.selectedItemID)
             } else {
                 ContentUnavailableView {
                     Label("Nothing Open", systemImage: "shippingbox")
@@ -24,10 +24,10 @@ struct ContentView: View {
             }
         }
         .task { await model.loadAllSources() }
-        .sheet(isPresented: Bindable(model).isAddingLink) {
+        .sheet(isPresented: $model.isAddingLink) {
             AddLinkSheet(model: model)
         }
-        .sheet(isPresented: Bindable(model).isSigningIn) {
+        .sheet(isPresented: $model.isSigningIn) {
             SignInSheet(model: model)
         }
     }

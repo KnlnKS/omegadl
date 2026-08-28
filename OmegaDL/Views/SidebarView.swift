@@ -5,33 +5,29 @@ struct SidebarView: View {
     @Bindable var model: AppModel
 
     var body: some View {
-        List(selection: $model.selectedSourceID) {
-            Section("Account") {
-                if let account = model.account {
-                    row(account)
-                        .contextMenu {
-                            Button("Sign Out", role: .destructive) { model.signOut() }
-                        }
-                } else {
-                    Button {
-                        model.isSigningIn = true
-                    } label: {
-                        Label("Sign In…", systemImage: "person.crop.circle.badge.plus")
+        List(selection: selection) {
+            if !model.accountItems.isEmpty {
+                Section {
+                    ForEach(model.accountItems) { item in
+                        row(item)
                     }
-                    .buttonStyle(.plain)
                 }
             }
 
-            if !model.links.isEmpty {
+            if !model.linkItems.isEmpty {
                 Section("Links") {
-                    ForEach(model.links) { source in
-                        row(source)
+                    ForEach(model.linkItems) { item in
+                        row(item)
                             .contextMenu {
-                                Button(downloadTitle(for: source)) { model.downloadEverything(from: source) }
+                                if let source = source(for: item) {
+                                    Button(downloadTitle(for: source)) {
+                                        model.downloadEverything(from: source)
+                                    }
                                     .disabled(source.tree == nil)
-                                Divider()
-                                Button("Copy Link") { copy(source) }
-                                Button("Remove", role: .destructive) { model.remove(source) }
+                                    Divider()
+                                    Button("Copy Link") { copy(source) }
+                                    Button("Remove", role: .destructive) { model.remove(source) }
+                                }
                             }
                     }
                 }
@@ -46,19 +42,23 @@ struct SidebarView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.accessoryBar)
-            .keyboardShortcut("l", modifiers: .command)
             .padding(8)
-        }
-        .onChange(of: model.selectedSourceID) {
-            model.currentFolder = nil
         }
     }
 
-    private func row(_ source: Source) -> some View {
-        Label(source.name, systemImage: source.symbol)
+    private var selection: Binding<SidebarItem.ID?> {
+        Binding(get: { model.selectedItemID }, set: { model.select($0) })
+    }
+
+    private func row(_ item: SidebarItem) -> some View {
+        Label(item.name, systemImage: item.symbol)
             .lineLimit(1)
             .truncationMode(.middle)
-            .tag(source.id)
+            .tag(item.id)
+    }
+
+    private func source(for item: SidebarItem) -> Source? {
+        model.sources.first { $0.id == item.sourceID }
     }
 
     private func downloadTitle(for source: Source) -> String {

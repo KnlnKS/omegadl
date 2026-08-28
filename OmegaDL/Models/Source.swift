@@ -71,7 +71,12 @@ final class Source: Identifiable {
         }
     }
 
+    private(set) var isRefreshing = false
+
     func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        defer { isRefreshing = false }
         if let updated = try? await session.loadTree() { tree = updated }
     }
 

@@ -6,8 +6,7 @@ import Testing
     @Test(liveOnly, .timeLimit(.minutes(1)))
     @MainActor
     func `downloads when driven from the main actor`() async throws {
-        let scratch = FileManager.default.temporaryDirectory.appending(path: "ma-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         let session = try MegaSession(link: try #require(MegaLink(Live.folderURL)))

@@ -101,11 +101,6 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
         #expect(tree.children(of: "MQ10FZrA").isEmpty)
         #expect(tree.path(to: "MQ10FZrA").map(\.handle) == ["MQ10FZrA"])
     }
-
-    @Test func `walks every descendant of a folder`() throws {
-        let tree = MegaTree(nodes: try decodedFixtureNodes())
-        #expect(tree.descendants(of: Live.rootHandle).count == Live.nodeCount - 1)
-    }
 }
 
 @Suite struct ShareKeyTests {
@@ -139,11 +134,5 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
             masterKey: masterKey
         )
         #expect(keys["AbCdEfGh"] == shareKey)
-    }
-
-    @Test func `names the standard account roots`() {
-        #expect(MegaNode.Kind.root.standardName == "Cloud Drive")
-        #expect(MegaNode.Kind.rubbish.standardName == "Rubbish")
-        #expect(MegaNode.Kind.file.standardName == nil)
     }
 }

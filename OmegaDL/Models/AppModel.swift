@@ -29,7 +29,6 @@ final class AppModel {
         links = (UserDefaults.standard.stringArray(forKey: Self.linksKey) ?? [])
             .compactMap(MegaLink.init)
             .compactMap { try? Source(link: $0) }
-
     }
 
     private func restoreAccount() async {

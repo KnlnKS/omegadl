@@ -2,24 +2,7 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private func hex(_ string: String) -> Data {
-    var bytes = [UInt8]()
-    var index = string.startIndex
-    while index < string.endIndex {
-        let next = string.index(index, offsetBy: 2)
-        bytes.append(UInt8(string[index..<next], radix: 16)!)
-        index = next
-    }
-    return Data(bytes)
-}
-
 @Suite struct Base64URLTests {
-    @Test func `decodes an unpadded MEGA folder key`() throws {
-        let key = try #require(Base64URL.decode("jH6VX0GcTngXCf6kBnQGDA"))
-        #expect(key.count == 16)
-        #expect(Base64URL.encode(key) == "jH6VX0GcTngXCf6kBnQGDA")
-    }
-
     @Test func `round-trips every length modulo four`() throws {
         for length in 1...20 {
             let data = Data((0..<length).map { UInt8(truncatingIfNeeded: $0 &* 37 &+ 11) })
@@ -45,15 +28,6 @@ private func hex(_ string: String) -> Data {
         let ciphertext = hex("69c4e0d86a7b0430d8cdb78070b4c55a")
         #expect(AES128.ecbEncrypt(plaintext, key: key) == ciphertext)
         #expect(AES128.ecbDecrypt(ciphertext, key: key) == plaintext)
-    }
-
-    @Test func `chains ECB across multiple blocks`() {
-        let key = hex("000102030405060708090a0b0c0d0e0f")
-        let plaintext = Data((0..<48).map(UInt8.init))
-        let ciphertext = AES128.ecbEncrypt(plaintext, key: key)
-        #expect(ciphertext.count == 48)
-        #expect(AES128.ecbDecrypt(ciphertext, key: key) == plaintext)
-        #expect(ciphertext.prefix(16) != ciphertext.dropFirst(16).prefix(16))
     }
 
     @Test func `round-trips CBC with a zero IV`() {

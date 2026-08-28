@@ -44,8 +44,7 @@ private let accountOnly: ConditionTrait = .enabled(
         let drive = try #require(tree.roots.first { $0.kind == .root })
         let rubbish = try #require(tree.roots.first { $0.kind == .rubbish })
 
-        let scratch = FileManager.default.temporaryDirectory.appending(path: "rb-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         let folder = try await session.createFolder(named: "OmegaDL Rubbish Test", in: drive.handle)
@@ -81,8 +80,7 @@ private let accountOnly: ConditionTrait = .enabled(
         let (session, tree) = try await signedIn()
         let drive = try #require(tree.roots.first { $0.kind == .root })
 
-        let scratch = FileManager.default.temporaryDirectory.appending(path: "up-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         let payload = Data((0..<1_500_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) })

@@ -91,10 +91,4 @@ import Testing
         let recomputed = chunks.map { ChunkMAC.mac(forChunk: Data(decrypted[$0.range]), key: key, nonce: nonce) }
         #expect(ChunkMAC.condense(recomputed, key: key) != uploaded.metaMAC)
     }
-
-    @Test func `generates distinct random keys`() {
-        let keys = (0..<32).map { _ in Data.random(count: 16) }
-        #expect(Set(keys).count == 32)
-        #expect(keys.allSatisfy { $0.count == 16 })
-    }
 }

@@ -24,10 +24,6 @@ public actor APIClient {
         folderID = id
     }
 
-    public var isAuthenticated: Bool { sessionID != nil }
-
-    public var currentSessionID: String? { sessionID }
-
     public func request<Command: Encodable & Sendable, Response: Decodable & Sendable>(
         _ command: Command,
         as responseType: Response.Type = Response.self

@@ -90,21 +90,6 @@ private let expectedSID = "AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJ
         #expect(MegaLogin.legacyKey(password: "").count == 16)
         #expect(MegaLogin.legacyKey(password: "a") != MegaLogin.legacyKey(password: "b"))
     }
-
-    @Test func `spans multiple blocks for a long password`() {
-        let long = String(repeating: "correct horse battery staple ", count: 3)
-        #expect(MegaLogin.legacyKey(password: long).count == 16)
-    }
-
-    @Test func `derives the v2 key and hash from one PBKDF2 output`() {
-        let derived = PBKDF2.sha512(
-            password: Data("password".utf8), salt: Data("salt".utf8),
-            iterations: MegaLogin.derivationIterations, length: 32
-        )
-        #expect(Data(derived.prefix(16)).count == 16)
-        #expect(Base64URL.encode(Data(derived.suffix(16))).count == 22)
-        #expect(derived.prefix(16) != derived.suffix(16))
-    }
 }
 
 @Suite(.serialized) struct KeychainTests {

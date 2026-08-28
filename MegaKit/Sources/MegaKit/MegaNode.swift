@@ -186,10 +186,6 @@ public struct MegaTree: Sendable {
         return path.reversed()
     }
 
-    public func descendants(of handle: String) -> [MegaNode] {
-        children(of: handle).flatMap { [$0] + ($0.isDirectory ? descendants(of: $0.handle) : []) }
-    }
-
     static func ordered(_ lhs: MegaNode, _ rhs: MegaNode) -> Bool {
         if lhs.isDirectory != rhs.isDirectory { return lhs.isDirectory }
         return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending

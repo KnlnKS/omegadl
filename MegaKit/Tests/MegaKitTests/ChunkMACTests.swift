@@ -2,17 +2,6 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private func hex(_ string: String) -> Data {
-    var bytes = [UInt8]()
-    var index = string.startIndex
-    while index < string.endIndex {
-        let next = string.index(index, offsetBy: 2)
-        bytes.append(UInt8(string[index..<next], radix: 16)!)
-        index = next
-    }
-    return Data(bytes)
-}
-
 private let realKey = MegaFileKey(packed: hex(
     "62b4e6786d5f3a303a7abe9e51cf3ff28ae83362ce78b1e09092af0f70214ec5"
 ))!

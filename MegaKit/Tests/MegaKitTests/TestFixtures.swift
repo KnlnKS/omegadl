@@ -21,3 +21,20 @@ enum Live {
 }
 
 let liveOnly: ConditionTrait = .enabled(if: Live.enabled, "set MEGA_LIVE_TESTS=1 to run tests that call MEGA")
+
+func hex(_ string: String) -> Data {
+    var bytes = [UInt8]()
+    var index = string.startIndex
+    while index < string.endIndex {
+        let next = string.index(index, offsetBy: 2)
+        bytes.append(UInt8(string[index..<next], radix: 16)!)
+        index = next
+    }
+    return Data(bytes)
+}
+
+func makeScratch() throws -> URL {
+    let url = FileManager.default.temporaryDirectory.appending(path: "omegadl-tests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}

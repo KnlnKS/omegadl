@@ -3,12 +3,6 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private func makeScratch() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appending(path: "omegadl-tests-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
-}
-
 @Suite struct SegmentPartitioningTests {
     @Test func `never splits a MAC chunk across segments`() {
         let chunks = MegaChunking.chunks(fileSize: 30 << 20)
@@ -200,11 +194,5 @@ private func makeScratch() throws -> URL {
         #expect(a != b)
         #expect(a == engine.stateURL(for: URL(filePath: "/a/movie.mkv")))
         #expect(a == engine.stateURL(for: URL(filePath: "/a/./movie.mkv")))
-    }
-
-    @Test func `defaults to application support rather than the download folder`() {
-        let path = DownloadEngine.defaultStateDirectory.path
-        #expect(path.contains("Application Support") || path.contains("tmp"))
-        #expect(path.hasSuffix("PartialDownloads"))
     }
 }

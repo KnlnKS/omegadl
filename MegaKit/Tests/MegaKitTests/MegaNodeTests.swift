@@ -89,6 +89,19 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
         #expect(path.map(\.handle) == [Live.rootHandle, Live.largeFileHandle])
     }
 
+    @Test func `roots a lone file at itself with no children`() {
+        let file = MegaNode(
+            handle: "MQ10FZrA", parentHandle: nil, owner: nil, kind: .file, size: 6_370_825_656,
+            modified: .distantPast, name: "episode.mkv", restoreHandle: nil, key: nil
+        )
+        let tree = MegaTree(nodes: [file])
+
+        #expect(tree.roots.map(\.handle) == ["MQ10FZrA"])
+        #expect(!tree.roots[0].isDirectory)
+        #expect(tree.children(of: "MQ10FZrA").isEmpty)
+        #expect(tree.path(to: "MQ10FZrA").map(\.handle) == ["MQ10FZrA"])
+    }
+
     @Test func `walks every descendant of a folder`() throws {
         let tree = MegaTree(nodes: try decodedFixtureNodes())
         #expect(tree.descendants(of: Live.rootHandle).count == Live.nodeCount - 1)

@@ -209,8 +209,15 @@ final class AppModel {
         return node.name
     }
 
+    func isSingleFile(_ source: Source) -> Bool {
+        guard let tree = source.tree else { return false }
+        return tree.roots.count == 1 && !tree.roots[0].isDirectory
+    }
+
     func contents(of source: Source) -> [MegaNode] {
-        guard let tree = source.tree, let folder, tree.node(folder) != nil else { return [] }
+        guard let tree = source.tree else { return [] }
+        if isSingleFile(source) { return tree.roots }
+        guard let folder, tree.node(folder) != nil else { return [] }
         return tree.children(of: folder)
     }
 

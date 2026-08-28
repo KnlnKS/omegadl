@@ -44,6 +44,7 @@ public enum MegaError: Error, Sendable, Hashable {
     case notAuthenticated
     case proofOfWorkFailed
     case diskWriteFailed
+    case keychainUnavailable
 
     static func apiCode(_ code: Int) -> MegaError {
         MegaAPIError(rawValue: code).map(MegaError.api) ?? .unrecognizedAPICode(code)
@@ -71,6 +72,7 @@ extension MegaError: LocalizedError {
         case .notAuthenticated: "Sign in to do that."
         case .proofOfWorkFailed: "Could not satisfy MEGA's anti-abuse challenge."
         case .diskWriteFailed: "OmegaDL could not write to the destination folder."
+        case .keychainUnavailable: "OmegaDL could not save your session to the keychain."
         }
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-public struct MegaFileKey: Sendable, Equatable {
+public struct MegaFileKey: Sendable, Hashable {
     public let aesKey: Data
     public let nonce: Data
     public let metaMAC: Data

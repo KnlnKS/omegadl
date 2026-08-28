@@ -101,6 +101,19 @@ final class AppModel {
         return tree.roots.count == 1 ? tree.children(of: tree.roots[0].handle) : tree.roots
     }
 
+    private var downloadsDirectory: URL? {
+        FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+    }
+
+    func download(_ nodes: [MegaNode], from source: Source) {
+        guard !nodes.isEmpty, let downloads = downloadsDirectory else { return }
+        transfers.download(nodes, from: source, into: downloads)
+    }
+
+    func downloadEverything(from source: Source) {
+        download(source.tree?.roots ?? [], from: source)
+    }
+
     func uploadTarget(in source: Source) -> String? {
         guard source.allowsUpload, let tree = source.tree else { return nil }
         if let folder = currentFolder, let node = tree.node(folder), node.isDirectory, node.kind != .rubbish {

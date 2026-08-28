@@ -27,6 +27,9 @@ struct SidebarView: View {
                     ForEach(model.links) { source in
                         row(source)
                             .contextMenu {
+                                Button(downloadTitle(for: source)) { model.downloadEverything(from: source) }
+                                    .disabled(source.tree == nil)
+                                Divider()
                                 Button("Copy Link") { copy(source) }
                                 Button("Remove", role: .destructive) { model.remove(source) }
                             }
@@ -56,6 +59,10 @@ struct SidebarView: View {
             .lineLimit(1)
             .truncationMode(.middle)
             .tag(source.id)
+    }
+
+    private func downloadTitle(for source: Source) -> String {
+        source.link?.kind == .file ? "Download" : "Download Folder"
     }
 
     private func copy(_ source: Source) {

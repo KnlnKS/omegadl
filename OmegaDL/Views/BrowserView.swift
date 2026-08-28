@@ -13,20 +13,9 @@ struct BrowserView: View {
 
     private var breadcrumbs: [MegaNode] { model.breadcrumbs(in: source) }
 
-    private var subtitle: String {
-        guard source.status == .loaded else { return "" }
-        let items = model.contents(of: source)
-        return switch items.count {
-        case 0: ""
-        case 1: "1 item"
-        default: "\(items.count) items"
-        }
-    }
-
     var body: some View {
         content
             .navigationTitle(breadcrumbs.last?.name ?? source.name)
-            .navigationSubtitle(subtitle)
             .dropDestination(for: URL.self) { urls, _ in accept(urls) } isTargeted: { targeted in
                 withAnimation(settleAnimation) { isDropTargeted = targeted }
             }
@@ -119,9 +108,6 @@ struct BrowserView: View {
             .keyboardShortcut(.upArrow, modifiers: .command)
             .help("Enclosing Folder")
         }
-        ToolbarItem(placement: .navigation) {
-            BreadcrumbBar(ancestors: breadcrumbs.dropLast()) { model.currentFolder = $0.handle }
-        }
         ToolbarItem {
             Button {
                 download(model.contents(of: source).filter { selection.contains($0.id) })
@@ -175,10 +161,7 @@ struct BrowserView: View {
     }
 
     private func download(_ nodes: [MegaNode]) {
-        guard !nodes.isEmpty,
-              let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-        else { return }
-        model.transfers.download(nodes, from: source, into: downloads)
+        model.download(nodes, from: source)
     }
 
     private func open(_ node: MegaNode) {
@@ -208,31 +191,6 @@ struct DropIndicator: View {
         .padding(10)
         .allowsHitTesting(false)
         .transition(.opacity)
-    }
-}
-
-struct BreadcrumbBar: View {
-    let ancestors: [MegaNode].SubSequence
-    let onSelect: (MegaNode) -> Void
-
-    var body: some View {
-        HStack(spacing: 1) {
-            ForEach(ancestors) { node in
-                Button {
-                    onSelect(node)
-                } label: {
-                    Text(node.name)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.accessoryBar)
-
-                Image(systemName: "chevron.compact.right")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-            }
-        }
     }
 }
 

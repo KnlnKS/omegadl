@@ -76,38 +76,41 @@ public struct NodeDecryptor: Sendable {
         return NodeDecryptor(keysByHandle: keys)
     }
 
-    func unwrap(_ field: String) -> Data? {
-        for segment in field.split(separator: "/") {
+    func unwrap(_ field: String) -> [Data] {
+        field.split(separator: "/").compactMap { segment in
             let parts = segment.split(separator: ":", maxSplits: 1)
             guard parts.count == 2,
                   let wrapping = keysByHandle[String(parts[0])] ?? fallbackKey,
                   let wrapped = Base64URL.decode(String(parts[1])),
                   wrapped.count == 16 || wrapped.count == 32
-            else { continue }
+            else { return nil }
             return AES128.ecbDecrypt(wrapped, key: wrapping)
         }
-        return nil
     }
 
     func decrypt(_ raw: RawNode) -> MegaNode? {
         let kind = MegaNode.Kind(rawValue: raw.t) ?? .file
         var key: MegaNode.Key?
+        var attributes: NodeAttributes?
 
-        if let field = raw.k, let unwrapped = unwrap(field) {
-            switch kind {
-            case .file:
-                key = MegaFileKey(packed: unwrapped).map(MegaNode.Key.file)
-            default:
-                key = unwrapped.count >= 16 ? .folder(Data(unwrapped.prefix(16))) : nil
+        for unwrapped in unwrap(raw.k ?? "") {
+            let candidate: MegaNode.Key? = switch kind {
+            case .file: MegaFileKey(packed: unwrapped).map(MegaNode.Key.file)
+            default: unwrapped.count >= 16 ? .folder(Data(unwrapped.prefix(16))) : nil
+            }
+            guard let candidate else { continue }
+            if key == nil { key = candidate }
+
+            let attributeKey = switch candidate {
+            case .file(let fileKey): fileKey.aesKey
+            case .folder(let folderKey): folderKey
+            }
+            if let decoded = Self.attributes(from: raw.a, key: attributeKey) {
+                key = candidate
+                attributes = decoded
+                break
             }
         }
-
-        let attributeKey = switch key {
-        case .file(let fileKey): fileKey.aesKey
-        case .folder(let folderKey): folderKey
-        case nil: nil as Data?
-        }
-        let attributes = attributeKey.flatMap { Self.attributes(from: raw.a, key: $0) }
 
         return MegaNode(
             handle: raw.h,

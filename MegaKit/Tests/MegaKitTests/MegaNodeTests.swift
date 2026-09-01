@@ -45,6 +45,22 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
         #expect(nodes.allSatisfy { $0.name == $0.handle })
     }
 
+    @Test func `reads a share root whose key is not the first segment`() throws {
+        let key = try #require(Base64URL.decode(Live.folderKey))
+        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle })
+        let decoy = "2X_iT56HQGc:" + Base64URL.encode(
+            AES128.ecbEncrypt(Data(repeating: 7, count: 16), key: Data(repeating: 3, count: 16))
+        )
+        let shared = RawNode(
+            h: root.h, p: root.p, u: root.u, t: root.t, a: root.a,
+            k: decoy + "/" + (try #require(root.k)), s: root.s, ts: root.ts
+        )
+
+        let node = try #require(NodeDecryptor.folderLink(key: key).decrypt(shared))
+        #expect(node.name == Live.folderName)
+        #expect(node.folderKey == NodeDecryptor.folderLink(key: key).decrypt(root)?.folderKey)
+    }
+
     @Test func `ignores key segments addressed to other holders`() throws {
         let key = try #require(Base64URL.decode(Live.folderKey))
         let decryptor = NodeDecryptor.account(userHandle: "somebodyelse", masterKey: Data(count: 16), shareKeys: [

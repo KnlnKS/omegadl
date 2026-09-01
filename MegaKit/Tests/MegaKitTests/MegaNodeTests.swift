@@ -2,12 +2,9 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private struct Listing: Decodable { let f: [RawNode] }
-
 private func decodedFixtureNodes() throws -> [MegaNode] {
-    let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
     let decryptor = NodeDecryptor.folderLink(key: try #require(Base64URL.decode(Live.folderKey)))
-    return listing.f.compactMap(decryptor.decrypt)
+    return try folderListingNodes().compactMap(decryptor.decrypt)
 }
 
 @Suite struct NodeDecryptionTests {
@@ -43,19 +40,33 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
     }
 
     @Test func `yields no name when the key does not match`() throws {
-        let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
         let wrong = NodeDecryptor.folderLink(key: Data(count: 16))
-        let nodes = listing.f.compactMap(wrong.decrypt)
+        let nodes = try folderListingNodes().compactMap(wrong.decrypt)
         #expect(nodes.allSatisfy { $0.name == $0.handle })
     }
 
+    @Test func `reads a share root whose key is not the first segment`() throws {
+        let key = try #require(Base64URL.decode(Live.folderKey))
+        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle })
+        let decoy = "2X_iT56HQGc:" + Base64URL.encode(
+            AES128.ecbEncrypt(Data(repeating: 7, count: 16), key: Data(repeating: 3, count: 16))
+        )
+        let shared = RawNode(
+            h: root.h, p: root.p, u: root.u, t: root.t, a: root.a,
+            k: decoy + "/" + (try #require(root.k)), s: root.s, ts: root.ts
+        )
+
+        let node = try #require(NodeDecryptor.folderLink(key: key).decrypt(shared))
+        #expect(node.name == Live.folderName)
+        #expect(node.folderKey == NodeDecryptor.folderLink(key: key).decrypt(root)?.folderKey)
+    }
+
     @Test func `ignores key segments addressed to other holders`() throws {
-        let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
         let key = try #require(Base64URL.decode(Live.folderKey))
         let decryptor = NodeDecryptor.account(userHandle: "somebodyelse", masterKey: Data(count: 16), shareKeys: [
             Live.rootHandle: key
         ])
-        let root = try #require(listing.f.first { $0.h == Live.rootHandle }.map(decryptor.decrypt))
+        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle }.map(decryptor.decrypt))
         #expect(root?.name == Live.folderName)
     }
 }

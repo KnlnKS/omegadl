@@ -114,3 +114,41 @@ private func syntheticPlaintext(_ count: Int) -> Data {
                 == ChunkMAC.mac(forChunk: short + Data(count: 13), key: key, nonce: nonce))
     }
 }
+
+@Suite struct SegmentMACTests {
+    private let key = hex("e85cd51aa3278bd0aae8119121ee7137")
+    private let nonce = hex("8ae83362ce78b1e0")
+
+    @Test(arguments: [1, 111, 131_072, 1_500_000, 2_097_153, 6_610_126])
+    func `slicing a segment yields the same MACs as walking every chunk`(size: Int) {
+        let plaintext = syntheticPlaintext(size)
+        let chunks = MegaChunking.chunks(fileSize: size)
+        let expected = chunks.map {
+            ChunkMAC.mac(forChunk: Data(plaintext[$0.range]), key: key, nonce: nonce)
+        }
+
+        for target in [1 << 20, 2 << 20, 8 << 20] {
+            let sliced = MegaChunking.segments(chunks: chunks, targetBytes: target).flatMap { range in
+                let start = chunks[range.lowerBound].offset
+                let last = chunks[range.upperBound - 1]
+                return ChunkMAC.macs(
+                    forSegment: Data(plaintext[start..<(last.offset + last.length)]),
+                    chunks: chunks[range], key: key, nonce: nonce
+                )
+            }
+            #expect(sliced == expected)
+            #expect(ChunkMAC.condense(sliced, key: key) == ChunkMAC.condense(expected, key: key))
+        }
+    }
+
+    @Test func `rebases onto a sliced buffer rather than assuming zero`() {
+        let plaintext = syntheticPlaintext(400_000)
+        let chunks = MegaChunking.chunks(fileSize: plaintext.count)
+        let padded = Data(count: 999) + plaintext
+
+        #expect(
+            ChunkMAC.macs(forSegment: padded.dropFirst(999), chunks: chunks[...], key: key, nonce: nonce)
+                == ChunkMAC.macs(forSegment: plaintext, chunks: chunks[...], key: key, nonce: nonce)
+        )
+    }
+}

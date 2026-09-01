@@ -5,7 +5,7 @@ import Foundation
 public struct DownloadEngine: Sendable {
     public static let partExtension = "omegadl-part"
 
-    let maximumConnections: Int
+    public let maximumConnections: Int
     let segmentSize: Int
     let maximumAttempts: Int
     let stateDirectory: URL
@@ -48,11 +48,10 @@ public struct DownloadEngine: Sendable {
         try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let chunks = MegaChunking.chunks(fileSize: descriptor.size)
 
-        var state = PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
-            ?? PartialDownload(size: descriptor.size, chunkCount: chunks.count)
-        if !FileManager.default.fileExists(atPath: partURL.path) {
-            state = PartialDownload(size: descriptor.size, chunkCount: chunks.count)
-        }
+        let resumed = FileManager.default.fileExists(atPath: partURL.path)
+            ? PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
+            : nil
+        var state = resumed ?? PartialDownload(size: descriptor.size, chunkCount: chunks.count)
 
         let file = try FileSlot(url: partURL, size: descriptor.size)
         defer { file.close() }
@@ -60,7 +59,7 @@ public struct DownloadEngine: Sendable {
         var completed = state.completedBytes
         onProgress(completed)
 
-        let pending = Self.segments(chunks: chunks, targetBytes: segmentSize)
+        let pending = MegaChunking.segments(chunks: chunks, targetBytes: segmentSize)
             .filter { range in range.contains { !state.isComplete(chunk: $0) } }
 
         if !pending.isEmpty {
@@ -132,13 +131,10 @@ public struct DownloadEngine: Sendable {
 
         try file.write(plaintext, at: start)
 
-        let macs = range.map { index in
-            let chunk = chunks[index]
-            let local = (chunk.offset - start)..<(chunk.offset - start + chunk.length)
-            return ChunkMAC.mac(
-                forChunk: Data(plaintext[local]), key: descriptor.key.aesKey, nonce: descriptor.key.nonce
-            )
-        }
+        let macs = ChunkMAC.macs(
+            forSegment: plaintext, chunks: chunks[range],
+            key: descriptor.key.aesKey, nonce: descriptor.key.nonce
+        )
         return SegmentResult(range: range, macs: macs, byteCount: end - start)
     }
 
@@ -170,21 +166,6 @@ public struct DownloadEngine: Sendable {
             try await Task.sleep(for: .seconds(1 << attempt))
         }
         throw MegaError.httpStatus(0)
-    }
-
-    static func segments(chunks: [MegaChunk], targetBytes: Int) -> [Range<Int>] {
-        var segments = [Range<Int>]()
-        var start = 0
-        var bytes = 0
-        for (index, chunk) in chunks.enumerated() {
-            bytes += chunk.length
-            if bytes >= targetBytes || index == chunks.count - 1 {
-                segments.append(start..<(index + 1))
-                start = index + 1
-                bytes = 0
-            }
-        }
-        return segments
     }
 }
 

@@ -6,16 +6,20 @@ public struct UploadResult: Sendable {
 }
 
 public struct UploadEngine: Sendable {
-    let maximumConnections: Int
+    private static let concurrentTransferHeadroom = 6
+
+    public let maximumConnections: Int
+    let segmentSize: Int
     let maximumAttempts: Int
     private let session: URLSession
 
-    public init(maximumConnections: Int = 4, maximumAttempts: Int = 5) {
+    public init(maximumConnections: Int = 8, segmentSize: Int = 2 << 20, maximumAttempts: Int = 5) {
         self.maximumConnections = max(1, maximumConnections)
+        self.segmentSize = max(MegaChunking.firstChunkSize, segmentSize)
         self.maximumAttempts = maximumAttempts
 
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = self.maximumConnections
+        configuration.httpMaximumConnectionsPerHost = self.maximumConnections * Self.concurrentTransferHeadroom
         configuration.timeoutIntervalForRequest = 120
         self.session = URLSession(configuration: configuration)
     }
@@ -37,6 +41,7 @@ public struct UploadEngine: Sendable {
         let handle = try FileHandle(forReadingFrom: source)
         defer { try? handle.close() }
 
+        let chunks = MegaChunking.chunks(fileSize: size)
         let cipher = CTRCryptor(key: key, nonce: nonce)
         var macs = [Data]()
         var completed = 0
@@ -45,14 +50,20 @@ public struct UploadEngine: Sendable {
         try await withThrowingTaskGroup(of: (Data, Int).self) { group in
             var inFlight = 0
 
-            for chunk in MegaChunking.chunks(fileSize: size) {
+            for segment in MegaChunking.segments(chunks: chunks, targetBytes: segmentSize) {
                 try Task.checkCancellation()
-                guard let plaintext = try handle.read(upToCount: chunk.length), plaintext.count == chunk.length
+                let offset = chunks[segment.lowerBound].offset
+                let last = chunks[segment.upperBound - 1]
+                let span = last.offset + last.length - offset
+                guard let plaintext = try handle.read(upToCount: span), plaintext.count == span
                 else { throw MegaError.diskWriteFailed }
 
-                macs.append(ChunkMAC.mac(forChunk: plaintext, key: key, nonce: nonce))
+                macs.append(
+                    contentsOf: ChunkMAC.macs(
+                        forSegment: plaintext, chunks: chunks[segment], key: key, nonce: nonce
+                    )
+                )
                 let ciphertext = cipher.process(plaintext)
-                let offset = chunk.offset
 
                 if inFlight >= maximumConnections, let (body, length) = try await group.next() {
                     inFlight -= 1

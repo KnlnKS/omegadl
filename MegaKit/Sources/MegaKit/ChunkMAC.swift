@@ -23,6 +23,21 @@ public enum MegaChunking {
         }
         return chunks
     }
+
+    public static func segments(chunks: [MegaChunk], targetBytes: Int) -> [Range<Int>] {
+        var segments = [Range<Int>]()
+        var start = 0
+        var bytes = 0
+        for (index, chunk) in chunks.enumerated() {
+            bytes += chunk.length
+            if bytes >= targetBytes || index == chunks.count - 1 {
+                segments.append(start..<(index + 1))
+                start = index + 1
+                bytes = 0
+            }
+        }
+        return segments
+    }
 }
 
 public enum ChunkMAC {
@@ -32,6 +47,16 @@ public enum ChunkMAC {
         padded.append(Data(count: (16 - plaintext.count % 16) % 16))
         guard !padded.isEmpty else { return nonce + nonce }
         return Data(AES128.cbcEncrypt(padded, key: key, iv: nonce + nonce).suffix(16))
+    }
+
+    public static func macs(
+        forSegment plaintext: Data, chunks: ArraySlice<MegaChunk>, key: Data, nonce: Data
+    ) -> [Data] {
+        guard let start = chunks.first?.offset else { return [] }
+        return chunks.map { chunk in
+            let lower = plaintext.startIndex + (chunk.offset - start)
+            return mac(forChunk: Data(plaintext[lower..<(lower + chunk.length)]), key: key, nonce: nonce)
+        }
     }
 
     public static func condense(_ macs: [Data], key: Data) -> Data {

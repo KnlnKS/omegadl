@@ -1,31 +1,7 @@
 import MegaKit
 import SwiftUI
 
-struct TransfersButton: View {
-    let manager: TransferManager
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button {
-            openWindow(id: TransfersWindow.id)
-        } label: {
-            Label("Transfers", systemImage: "arrow.down.circle")
-                .overlay(alignment: .center) {
-                    if manager.activeCount > 0 {
-                        TransferRing(fraction: manager.aggregateFraction)
-                    }
-                }
-        }
-        .help("Transfers")
-        .accessibilityLabel(
-            manager.activeCount == 0
-                ? "Transfers"
-                : "Transfers, \(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
-        )
-    }
-}
-
-private struct TransferRing: View {
+struct TransferRing: View {
     let fraction: Double
     @Environment(\.fluidAnimation) private var fluidAnimation
 
@@ -40,9 +16,7 @@ private struct TransferRing: View {
     }
 }
 
-struct TransfersWindow: View {
-    static let id = "transfers"
-
+struct TransfersView: View {
     let manager: TransferManager
 
     private var finishedCount: Int {
@@ -51,7 +25,6 @@ struct TransfersWindow: View {
 
     var body: some View {
         content
-            .frame(minWidth: 420, minHeight: 240)
             .navigationTitle("Transfers")
             .navigationSubtitle(subtitle)
             .toolbar {
@@ -67,9 +40,9 @@ struct TransfersWindow: View {
     private var content: some View {
         if manager.transfers.isEmpty {
             ContentUnavailableView {
-                Label("No Transfers", systemImage: "arrow.down.circle")
+                Label("No Transfers", systemImage: "arrow.up.arrow.down")
             } description: {
-                Text("Downloads and uploads appear here while they run.")
+                Text("Downloads and uploads appear here")
             }
         } else {
             List {

@@ -14,6 +14,10 @@ struct OmegaDLApp: App {
         .windowToolbarStyle(.unified)
         .commands {
             SidebarCommands()
+            CommandGroup(after: .sidebar) {
+                Button("Transfers") { model.select(.transfers) }
+                    .keyboardShortcut("t", modifiers: [.command, .option])
+            }
             CommandGroup(after: .appInfo) {
                 Divider()
                 if model.isSignedIn {
@@ -31,13 +35,6 @@ struct OmegaDLApp: App {
                 }
             }
         }
-
-        Window("Transfers", id: TransfersWindow.id) {
-            TransfersWindow(manager: model.transfers)
-        }
-        .defaultSize(width: 480, height: 360)
-        .windowResizability(.contentMinSize)
-        .keyboardShortcut("t", modifiers: [.command, .option])
 
         Settings {
             SettingsView()

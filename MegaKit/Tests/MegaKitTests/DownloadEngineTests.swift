@@ -7,7 +7,7 @@ import Testing
     @Test func `never splits a MAC chunk across segments`() {
         let chunks = MegaChunking.chunks(fileSize: 30 << 20)
         for target in [1 << 20, 2 << 20, 8 << 20] {
-            let segments = DownloadEngine.segments(chunks: chunks, targetBytes: target)
+            let segments = MegaChunking.segments(chunks: chunks, targetBytes: target)
             #expect(segments.first?.lowerBound == 0)
             #expect(segments.last?.upperBound == chunks.count)
             #expect(zip(segments, segments.dropFirst()).allSatisfy { $0.upperBound == $1.lowerBound })
@@ -16,18 +16,18 @@ import Testing
 
     @Test func `starts every segment on a 16-byte boundary`() {
         let chunks = MegaChunking.chunks(fileSize: 6_610_126)
-        for segment in DownloadEngine.segments(chunks: chunks, targetBytes: 2 << 20) {
+        for segment in MegaChunking.segments(chunks: chunks, targetBytes: 2 << 20) {
             #expect(chunks[segment.lowerBound].offset % 16 == 0)
         }
     }
 
     @Test func `covers a file smaller than one segment with a single segment`() {
         let chunks = MegaChunking.chunks(fileSize: 111)
-        #expect(DownloadEngine.segments(chunks: chunks, targetBytes: 2 << 20) == [0..<1])
+        #expect(MegaChunking.segments(chunks: chunks, targetBytes: 2 << 20) == [0..<1])
     }
 
     @Test func `produces nothing for an empty file`() {
-        #expect(DownloadEngine.segments(chunks: [], targetBytes: 1 << 20).isEmpty)
+        #expect(MegaChunking.segments(chunks: [], targetBytes: 1 << 20).isEmpty)
     }
 }
 

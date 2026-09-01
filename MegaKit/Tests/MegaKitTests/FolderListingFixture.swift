@@ -1,3 +1,6 @@
+import Foundation
+@testable import MegaKit
+
 let folderListingJSON = """
 {"f":[{"h":"LIkEAD7L","p":"yIlzmbYL","u":"2X_iT56HQGc","t":1,"a":"sb3FwvQkIXByBDEWj0pFohyOuQA-Hq\
 Ny0d_cp0x2e7pF5DG6bfSGvsdAkvw1mg7J","k":"LIkEAD7L:q3LsbDx94uklmchV6YBLvw","ts":1787242788},{"h":\
@@ -31,3 +34,7 @@ gL9udKi18uDkTsNM7NQr2w710OhqXI","k":"LIkEAD7L:AmrS7gkHqAr2TwsVVJwSUQJROf70uTRL2c
 yN95ius7jncJLAoNYxKVNepsVlpM0wkzrHnZCyJxzog4c-3ICGxECtARLYOo2gluIz4RK0DnnJGfosk3AFVmvU5vc-haBmIw\
 ","k":"LIkEAD7L:j0lqVILtEHE9wuFQnXEqnQpo4-kPRQ6Cq1cRENDepKY","s":9870221,"ts":1787242953}]}
 """
+
+func folderListingNodes() throws -> [RawNode] {
+    try JSONDecoder().decode(FilesResponse.self, from: Data(folderListingJSON.utf8)).f
+}

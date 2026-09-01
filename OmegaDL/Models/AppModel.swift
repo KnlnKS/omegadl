@@ -3,11 +3,16 @@ import MegaKit
 import Observation
 
 struct SidebarItem: Identifiable, Hashable {
-    let id: String
-    let sourceID: Source.ID
-    let rootHandle: String?
+    enum ID: Hashable {
+        case folder(String)
+        case transfers
+    }
+
+    let id: ID
     let name: String
     let symbol: String
+
+    static let transfers = SidebarItem(id: .transfers, name: "Transfers", symbol: "arrow.up.arrow.down")
 }
 
 @Observable
@@ -37,22 +42,12 @@ final class AppModel {
         account = Source(account: stored)
     }
 
-    var sources: [Source] {
-        account.map { [$0] } ?? []
-    }
-
     var isSignedIn: Bool { account != nil }
 
     var accountItems: [SidebarItem] {
-        guard let account, let tree = account.tree else { return [] }
+        guard let tree = account?.tree else { return [] }
         return tree.roots.sorted { $0.kind.rawValue < $1.kind.rawValue }.map { root in
-            SidebarItem(
-                id: "\(account.id)/\(root.handle)",
-                sourceID: account.id,
-                rootHandle: root.handle,
-                name: root.name,
-                symbol: symbol(for: root.kind)
-            )
+            SidebarItem(id: .folder(root.handle), name: root.name, symbol: symbol(for: root.kind))
         }
     }
 
@@ -66,18 +61,19 @@ final class AppModel {
         }
     }
 
-    var selectedItem: SidebarItem? {
-        accountItems.first { $0.id == selectedItemID }
+    var rootHandle: String? {
+        guard case .folder(let handle) = selectedItemID,
+              accountItems.contains(where: { $0.id == selectedItemID })
+        else { return nil }
+        return handle
+    }
+
+    var isShowingTransfers: Bool {
+        selectedItemID == .transfers
     }
 
     var selectedSource: Source? {
-        guard let sourceID = selectedItem?.sourceID else { return nil }
-        return sources.first { $0.id == sourceID }
-    }
-
-    var rootHandle: String? {
-        guard let item = selectedItem else { return nil }
-        return item.rootHandle ?? selectedSource?.tree?.roots.first?.handle
+        rootHandle == nil ? nil : account
     }
 
     var folder: String? {
@@ -91,11 +87,7 @@ final class AppModel {
 
     func loadAllSources() async {
         await restoreAccount()
-        await withTaskGroup(of: Void.self) { group in
-            for source in sources {
-                group.addTask { await source.load() }
-            }
-        }
+        await account?.load()
         if selectedItemID == nil {
             selectedItemID = accountItems.first?.id
         }

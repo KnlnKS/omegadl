@@ -17,7 +17,7 @@ struct AddLinkSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Add MEGA Links")
                     .font(.headline)
-                Text("Paste one link or many. Files download; folders let you choose.")
+                Text("Paste your MEGA links here")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

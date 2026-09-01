@@ -25,8 +25,7 @@ public actor APIClient {
     }
 
     public func request<Command: Encodable & Sendable, Response: Decodable & Sendable>(
-        _ command: Command,
-        as responseType: Response.Type = Response.self
+        _ command: Command
     ) async throws -> Response {
         sequence += 1
         let url = endpoint(id: sequence)

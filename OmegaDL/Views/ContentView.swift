@@ -8,7 +8,9 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(model: model)
         } detail: {
-            if let source = model.selectedSource {
+            if model.isShowingTransfers {
+                TransfersView(manager: model.transfers)
+            } else if let source = model.selectedSource {
                 BrowserView(model: model, source: source)
                     .id(model.selectedItemID)
             } else {
@@ -32,9 +34,6 @@ struct ContentView: View {
                 }
                 .keyboardShortcut("l", modifiers: .command)
                 .help("Add a MEGA Link")
-            }
-            ToolbarItem {
-                TransfersButton(manager: model.transfers)
             }
         }
         .task { await model.loadAllSources() }

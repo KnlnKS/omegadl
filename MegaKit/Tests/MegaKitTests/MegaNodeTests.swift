@@ -2,12 +2,9 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private struct Listing: Decodable { let f: [RawNode] }
-
 private func decodedFixtureNodes() throws -> [MegaNode] {
-    let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
     let decryptor = NodeDecryptor.folderLink(key: try #require(Base64URL.decode(Live.folderKey)))
-    return listing.f.compactMap(decryptor.decrypt)
+    return try folderListingNodes().compactMap(decryptor.decrypt)
 }
 
 @Suite struct NodeDecryptionTests {
@@ -43,19 +40,17 @@ private func decodedFixtureNodes() throws -> [MegaNode] {
     }
 
     @Test func `yields no name when the key does not match`() throws {
-        let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
         let wrong = NodeDecryptor.folderLink(key: Data(count: 16))
-        let nodes = listing.f.compactMap(wrong.decrypt)
+        let nodes = try folderListingNodes().compactMap(wrong.decrypt)
         #expect(nodes.allSatisfy { $0.name == $0.handle })
     }
 
     @Test func `ignores key segments addressed to other holders`() throws {
-        let listing = try JSONDecoder().decode(Listing.self, from: Data(folderListingJSON.utf8))
         let key = try #require(Base64URL.decode(Live.folderKey))
         let decryptor = NodeDecryptor.account(userHandle: "somebodyelse", masterKey: Data(count: 16), shareKeys: [
             Live.rootHandle: key
         ])
-        let root = try #require(listing.f.first { $0.h == Live.rootHandle }.map(decryptor.decrypt))
+        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle }.map(decryptor.decrypt))
         #expect(root?.name == Live.folderName)
     }
 }

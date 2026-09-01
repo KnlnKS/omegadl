@@ -89,8 +89,12 @@ final class Source: Identifiable {
     }
 
     func upload(
-        fileAt url: URL, as name: String, to parent: String, onProgress: @escaping @Sendable (Int) -> Void
+        fileAt url: URL,
+        as name: String,
+        to parent: String,
+        engine: UploadEngine,
+        onProgress: @escaping @Sendable (Int) -> Void
     ) async throws -> MegaNode {
-        try await session.upload(fileAt: url, as: name, to: parent, onProgress: onProgress)
+        try await session.upload(fileAt: url, as: name, to: parent, engine: engine, onProgress: onProgress)
     }
 }

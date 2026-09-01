@@ -92,6 +92,7 @@ final class TransferManager {
     private(set) var isPreparing = false
 
     private var downloads = DownloadEngine(maximumConnections: Preferences.connectionsPerTransfer)
+    private var uploads = UploadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var running = 0
 
     private var maximumConcurrent: Int { Preferences.simultaneousTransfers }
@@ -102,6 +103,14 @@ final class TransferManager {
             downloads = DownloadEngine(maximumConnections: wanted)
         }
         return downloads
+    }
+
+    private func uploadEngine() -> UploadEngine {
+        let wanted = Preferences.connectionsPerTransfer
+        if wanted != uploads.maximumConnections {
+            uploads = UploadEngine(maximumConnections: wanted)
+        }
+        return uploads
     }
 
     var activeCount: Int {
@@ -244,7 +253,8 @@ final class TransferManager {
 
                 case .upload(let file, let parent):
                     _ = try await transfer.source.upload(
-                        fileAt: file, as: transfer.name, to: parent, onProgress: report
+                        fileAt: file, as: transfer.name, to: parent,
+                        engine: uploadEngine(), onProgress: report
                     )
                     await transfer.source.refresh()
                 }

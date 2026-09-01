@@ -94,6 +94,7 @@ final class TransferManager {
     private var downloads = DownloadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var uploads = UploadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var running = 0
+    private var refreshes: [Source.ID: Task<Void, Never>] = [:]
 
     private var maximumConcurrent: Int { Preferences.simultaneousTransfers }
 
@@ -256,7 +257,6 @@ final class TransferManager {
                         fileAt: file, as: transfer.name, to: parent,
                         engine: uploadEngine(), onProgress: report
                     )
-                    await transfer.source.refresh()
                 }
                 transfer.state = .completed
                 transfer.bytesCompleted = transfer.size
@@ -267,6 +267,16 @@ final class TransferManager {
             }
             running -= 1
             pump()
+            if transfer.isUpload { scheduleRefresh(of: transfer.source) }
+        }
+    }
+
+    private func scheduleRefresh(of source: Source) {
+        refreshes[source.id]?.cancel()
+        refreshes[source.id] = Task {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await source.refresh()
         }
     }
 

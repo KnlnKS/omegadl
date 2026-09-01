@@ -49,6 +49,16 @@ public enum ChunkMAC {
         return Data(AES128.cbcEncrypt(padded, key: key, iv: nonce + nonce).suffix(16))
     }
 
+    public static func macs(
+        forSegment plaintext: Data, chunks: ArraySlice<MegaChunk>, key: Data, nonce: Data
+    ) -> [Data] {
+        guard let start = chunks.first?.offset else { return [] }
+        return chunks.map { chunk in
+            let lower = plaintext.startIndex + (chunk.offset - start)
+            return mac(forChunk: Data(plaintext[lower..<(lower + chunk.length)]), key: key, nonce: nonce)
+        }
+    }
+
     public static func condense(_ macs: [Data], key: Data) -> Data {
         guard !macs.isEmpty else { return Data(count: 8) }
         let folded = Data(AES128.cbcEncrypt(macs.reduce(Data(), +), key: key).suffix(16))

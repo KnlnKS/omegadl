@@ -131,13 +131,10 @@ public struct DownloadEngine: Sendable {
 
         try file.write(plaintext, at: start)
 
-        let macs = range.map { index in
-            let chunk = chunks[index]
-            let local = (chunk.offset - start)..<(chunk.offset - start + chunk.length)
-            return ChunkMAC.mac(
-                forChunk: Data(plaintext[local]), key: descriptor.key.aesKey, nonce: descriptor.key.nonce
-            )
-        }
+        let macs = ChunkMAC.macs(
+            forSegment: plaintext, chunks: chunks[range],
+            key: descriptor.key.aesKey, nonce: descriptor.key.nonce
+        )
         return SegmentResult(range: range, macs: macs, byteCount: end - start)
     }
 

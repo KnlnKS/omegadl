@@ -32,8 +32,9 @@ struct OmegaDLApp: App {
             }
         }
 
-        Window("Transfers", id: TransfersWindow.id) {
-            TransfersWindow(manager: model.transfers)
+        Window("Transfers", id: "transfers") {
+            TransfersView(manager: model.transfers)
+                .frame(minWidth: 420, minHeight: 240)
         }
         .defaultSize(width: 480, height: 360)
         .windowResizability(.contentMinSize)

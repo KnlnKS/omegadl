@@ -9,6 +9,9 @@ struct SidebarView: View {
             ForEach(model.accountItems) { item in
                 row(item)
             }
+            Section {
+                transfersRow
+            }
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
     }
@@ -17,10 +20,30 @@ struct SidebarView: View {
         Binding(get: { model.selectedItemID }, set: { model.select($0) })
     }
 
+    private var transfersRow: some View {
+        let manager = model.transfers
+        return HStack {
+            label(.transfers)
+            Spacer(minLength: 0)
+            if manager.activeCount > 0 {
+                TransferRing(fraction: manager.aggregateFraction)
+            }
+        }
+        .tag(SidebarItem.ID.transfers)
+        .accessibilityValue(
+            manager.activeCount == 0
+                ? ""
+                : "\(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
+        )
+    }
+
     private func row(_ item: SidebarItem) -> some View {
+        label(item).tag(item.id)
+    }
+
+    private func label(_ item: SidebarItem) -> some View {
         Label(item.name, systemImage: item.symbol)
             .lineLimit(1)
             .truncationMode(.middle)
-            .tag(item.id)
     }
 }

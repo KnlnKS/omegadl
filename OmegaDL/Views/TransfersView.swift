@@ -7,7 +7,7 @@ struct TransfersButton: View {
 
     var body: some View {
         Button {
-            openWindow(id: TransfersWindow.id)
+            openWindow(id: "transfers")
         } label: {
             Label("Transfers", systemImage: "arrow.down.circle")
                 .overlay(alignment: .center) {
@@ -25,7 +25,7 @@ struct TransfersButton: View {
     }
 }
 
-private struct TransferRing: View {
+struct TransferRing: View {
     let fraction: Double
     @Environment(\.fluidAnimation) private var fluidAnimation
 
@@ -40,9 +40,7 @@ private struct TransferRing: View {
     }
 }
 
-struct TransfersWindow: View {
-    static let id = "transfers"
-
+struct TransfersView: View {
     let manager: TransferManager
 
     private var finishedCount: Int {
@@ -51,7 +49,6 @@ struct TransfersWindow: View {
 
     var body: some View {
         content
-            .frame(minWidth: 420, minHeight: 240)
             .navigationTitle("Transfers")
             .navigationSubtitle(subtitle)
             .toolbar {

@@ -3,9 +3,16 @@ import MegaKit
 import Observation
 
 struct SidebarItem: Identifiable, Hashable {
-    let id: String
+    enum ID: Hashable {
+        case folder(String)
+        case transfers
+    }
+
+    let id: ID
     let name: String
     let symbol: String
+
+    static let transfers = SidebarItem(id: .transfers, name: "Transfers", symbol: "arrow.down.circle")
 }
 
 @Observable
@@ -40,7 +47,7 @@ final class AppModel {
     var accountItems: [SidebarItem] {
         guard let tree = account?.tree else { return [] }
         return tree.roots.sorted { $0.kind.rawValue < $1.kind.rawValue }.map { root in
-            SidebarItem(id: root.handle, name: root.name, symbol: symbol(for: root.kind))
+            SidebarItem(id: .folder(root.handle), name: root.name, symbol: symbol(for: root.kind))
         }
     }
 
@@ -55,7 +62,14 @@ final class AppModel {
     }
 
     var rootHandle: String? {
-        accountItems.contains { $0.id == selectedItemID } ? selectedItemID : nil
+        guard case .folder(let handle) = selectedItemID,
+              accountItems.contains(where: { $0.id == selectedItemID })
+        else { return nil }
+        return handle
+    }
+
+    var isShowingTransfers: Bool {
+        selectedItemID == .transfers
     }
 
     var selectedSource: Source? {

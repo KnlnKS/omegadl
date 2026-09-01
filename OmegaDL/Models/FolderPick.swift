@@ -37,7 +37,6 @@ final class FolderPick: Identifiable {
     let source: Source
     let root: PickNode
 
-    var expanded: Set<MegaNode.ID>
     private(set) var files: Set<MegaNode.ID> = []
     private(set) var bytes = 0
     private var chosen: [MegaNode.ID: Int] = [:]
@@ -46,7 +45,6 @@ final class FolderPick: Identifiable {
     init(source: Source, root: MegaNode, tree: MegaTree) {
         self.source = source
         self.root = PickNode(node: root, in: tree)
-        self.expanded = [root.id]
         index(self.root, parent: nil)
         selectAll()
     }

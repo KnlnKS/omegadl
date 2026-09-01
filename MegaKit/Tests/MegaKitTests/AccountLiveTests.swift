@@ -92,7 +92,8 @@ private let accountOnly: ConditionTrait = .enabled(
         #expect(folder.folderKey?.count == 16)
 
         let uploaded = try await session.upload(
-            fileAt: localFile, as: "omegadl-upload-test.bin", to: folder.handle
+            fileAt: localFile, as: "omegadl-upload-test.bin", to: folder.handle,
+            engine: UploadEngine(maximumConnections: 4, segmentSize: 1 << 20)
         )
         #expect(uploaded.name == "omegadl-upload-test.bin")
         #expect(uploaded.size == payload.count)

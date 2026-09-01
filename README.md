@@ -4,7 +4,7 @@
 
 # OmegaDL
 
-An unofficial native macOS client for MEGA downloads and uploads.
+An unofficial macOS client for MEGA file transfers.
 
 </div>
 
@@ -36,7 +36,7 @@ xcodegen generate
 open OmegaDL.xcodeproj
 ```
 
-`MegaKit` is the Swift package that talks to MEGA: login, RSA and AES key handling, chunked transfers with MAC verification. The app target is SwiftUI on top of it.
+`MegaKit` is the Mega Swift sdk. The app target is SwiftUI on top of it.
 
 ## Thanks
 

@@ -23,6 +23,21 @@ public enum MegaChunking {
         }
         return chunks
     }
+
+    public static func segments(chunks: [MegaChunk], targetBytes: Int) -> [Range<Int>] {
+        var segments = [Range<Int>]()
+        var start = 0
+        var bytes = 0
+        for (index, chunk) in chunks.enumerated() {
+            bytes += chunk.length
+            if bytes >= targetBytes || index == chunks.count - 1 {
+                segments.append(start..<(index + 1))
+                start = index + 1
+                bytes = 0
+            }
+        }
+        return segments
+    }
 }
 
 public enum ChunkMAC {

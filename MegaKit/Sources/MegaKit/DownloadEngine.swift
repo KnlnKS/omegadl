@@ -59,7 +59,7 @@ public struct DownloadEngine: Sendable {
         var completed = state.completedBytes
         onProgress(completed)
 
-        let pending = Self.segments(chunks: chunks, targetBytes: segmentSize)
+        let pending = MegaChunking.segments(chunks: chunks, targetBytes: segmentSize)
             .filter { range in range.contains { !state.isComplete(chunk: $0) } }
 
         if !pending.isEmpty {
@@ -169,21 +169,6 @@ public struct DownloadEngine: Sendable {
             try await Task.sleep(for: .seconds(1 << attempt))
         }
         throw MegaError.httpStatus(0)
-    }
-
-    static func segments(chunks: [MegaChunk], targetBytes: Int) -> [Range<Int>] {
-        var segments = [Range<Int>]()
-        var start = 0
-        var bytes = 0
-        for (index, chunk) in chunks.enumerated() {
-            bytes += chunk.length
-            if bytes >= targetBytes || index == chunks.count - 1 {
-                segments.append(start..<(index + 1))
-                start = index + 1
-                bytes = 0
-            }
-        }
-        return segments
     }
 }
 

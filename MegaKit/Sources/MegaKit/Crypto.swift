@@ -115,6 +115,10 @@ func withOptionalBytes<R>(_ data: Data?, _ body: (UnsafeRawPointer?) -> R) -> R 
 }
 
 extension Data {
+    static func random(count: Int) -> Data {
+        Data((0..<count).map { _ in UInt8.random(in: .min ... .max) })
+    }
+
     func xor(_ other: Data) -> Data {
         precondition(count == other.count)
         return Data(zip(self, other).map(^))

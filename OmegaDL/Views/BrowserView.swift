@@ -1,7 +1,6 @@
 import AppKit
 import MegaKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct BrowserView: View {
     @Bindable var model: AppModel
@@ -111,11 +110,11 @@ struct BrowserView: View {
                     .accessibilityLabel(
                         node.isDirectory
                             ? "\(node.name), folder"
-                            : "\(node.name), \(node.size.formatted(.byteCount(style: .file)))"
+                            : "\(node.name), \(byteText(node.size))"
                     )
             }
             TableColumn("Size") { node in
-                Text(node.isDirectory ? "—" : node.size.formatted(.byteCount(style: .file)))
+                Text(node.isDirectory ? "—" : byteText(node.size))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
@@ -162,24 +161,16 @@ struct BrowserView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            Button {
-                model.goUp(in: source)
-            } label: {
-                Label("Back", systemImage: "chevron.left")
-            }
-            .disabled(!model.canGoUp)
-            .keyboardShortcut(.upArrow, modifiers: .command)
-            .help("Enclosing Folder")
+            Button("Back", systemImage: "chevron.left") { model.goUp(in: source) }
+                .disabled(!model.canGoUp)
+                .keyboardShortcut(.upArrow, modifiers: .command)
+                .help("Enclosing Folder")
         }
         ToolbarItem(placement: .navigation) {
-            Button {
-                Task { await source.refresh() }
-            } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
-            }
-            .disabled(source.isRefreshing || source.status != .loaded)
-            .keyboardShortcut("r", modifiers: .command)
-            .help("Refresh")
+            Button("Refresh", systemImage: "arrow.clockwise") { Task { await source.refresh() } }
+                .disabled(source.isRefreshing || source.status != .loaded)
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Refresh")
         }
     }
 
@@ -226,20 +217,20 @@ struct BrowserView: View {
     private func putBack(_ nodes: [MegaNode]) {
         perform(nodes) { node in
             guard let target = model.restoreDestination(for: node, in: source) else { return }
-            try await source.move(node, to: target.handle)
+            try await source.session.move(node, to: target.handle)
         }
     }
 
     private func moveToRubbish(_ nodes: [MegaNode]) {
         guard let bin = model.rubbishHandle(in: source) else { return }
         perform(nodes) { node in
-            try await source.move(node, to: bin, recordingOrigin: true)
+            try await source.session.move(node, to: bin, recordingOrigin: true)
         }
     }
 
     private func delete(_ nodes: [MegaNode]) {
         pendingDeletion = []
-        perform(nodes) { node in try await source.delete(node) }
+        perform(nodes) { node in try await source.session.delete(node) }
     }
 
     private func perform(_ nodes: [MegaNode], _ action: @escaping (MegaNode) async throws -> Void) {
@@ -287,27 +278,5 @@ struct DropIndicator: View {
         .padding(10)
         .allowsHitTesting(false)
         .transition(.opacity)
-    }
-}
-
-struct NodeLabel: View {
-    let node: MegaNode
-
-    var body: some View {
-        Label {
-            Text(node.name).lineLimit(1)
-        } icon: {
-            Image(nsImage: NodeIcon.image(named: node.name, isDirectory: node.isDirectory))
-                .resizable()
-                .frame(width: 16, height: 16)
-        }
-    }
-}
-
-enum NodeIcon {
-    static func image(named name: String, isDirectory: Bool = false) -> NSImage {
-        guard !isDirectory else { return NSWorkspace.shared.icon(for: .folder) }
-        let type = UTType(filenameExtension: (name as NSString).pathExtension) ?? .data
-        return NSWorkspace.shared.icon(for: type)
     }
 }

@@ -69,49 +69,36 @@ final class Transfer: Identifiable {
     }
 
     func record(bytes: Int) {
+        defer { bytesCompleted = bytes }
         let now = ContinuousClock.now
-        if let last = lastSample {
-            let elapsed = now - last.time
-            let seconds = Double(elapsed.components.seconds)
-                + Double(elapsed.components.attoseconds) / 1e18
-            if seconds > 0.05 {
-                let instant = Double(bytes - last.bytes) / seconds
-                bytesPerSecond = bytesPerSecond == 0 ? instant : bytesPerSecond * 0.7 + instant * 0.3
-                lastSample = (bytes, now)
-            }
-        } else {
+        guard let last = lastSample else {
             lastSample = (bytes, now)
+            return
         }
-        bytesCompleted = bytes
+        let elapsed = now - last.time
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        guard seconds > 0.05 else { return }
+
+        let instant = Double(bytes - last.bytes) / seconds
+        bytesPerSecond = bytesPerSecond == 0 ? instant : bytesPerSecond * 0.7 + instant * 0.3
+        lastSample = (bytes, now)
     }
 }
 
 @Observable
 final class TransferManager {
     private(set) var transfers: [Transfer] = []
-    private(set) var isPreparing = false
 
     private var downloads = DownloadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var uploads = UploadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var running = 0
     private var refreshes: [Source.ID: Task<Void, Never>] = [:]
 
-    private var maximumConcurrent: Int { Preferences.simultaneousTransfers }
-
-    private func downloadEngine() -> DownloadEngine {
+    private func syncEngines() {
         let wanted = Preferences.connectionsPerTransfer
-        if wanted != downloads.maximumConnections {
-            downloads = DownloadEngine(maximumConnections: wanted)
-        }
-        return downloads
-    }
-
-    private func uploadEngine() -> UploadEngine {
-        let wanted = Preferences.connectionsPerTransfer
-        if wanted != uploads.maximumConnections {
-            uploads = UploadEngine(maximumConnections: wanted)
-        }
-        return uploads
+        guard wanted != downloads.maximumConnections else { return }
+        downloads = DownloadEngine(maximumConnections: wanted)
+        uploads = UploadEngine(maximumConnections: wanted)
     }
 
     var activeCount: Int {
@@ -170,9 +157,7 @@ final class TransferManager {
     }
 
     func upload(_ urls: [URL], to source: Source, parent: String) {
-        isPreparing = true
         Task {
-            defer { isPreparing = false }
             for url in urls {
                 await enqueue(url, to: source, parent: parent)
             }
@@ -181,15 +166,14 @@ final class TransferManager {
     }
 
     private func enqueue(_ url: URL, to source: Source, parent: String) async {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return }
+        guard let isDirectory = try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory else { return }
 
-        guard isDirectory.boolValue else {
+        guard isDirectory else {
             transfers.append(Transfer(uploading: url, to: parent, from: source))
             return
         }
 
-        guard let folder = try? await source.createFolder(named: url.lastPathComponent, in: parent) else { return }
+        guard let folder = try? await source.session.createFolder(named: url.lastPathComponent, in: parent) else { return }
         let children = (try? FileManager.default.contentsOfDirectory(
             at: url, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
         )) ?? []
@@ -227,12 +211,14 @@ final class TransferManager {
     }
 
     private func pump() {
-        while running < maximumConcurrent, let next = transfers.first(where: { $0.state == .queued }) {
+        while running < Preferences.simultaneousTransfers,
+              let next = transfers.first(where: { $0.state == .queued }) {
             start(next)
         }
     }
 
     private func start(_ transfer: Transfer) {
+        syncEngines()
         transfer.state = .running
         running += 1
 
@@ -246,16 +232,16 @@ final class TransferManager {
             do {
                 switch transfer.kind {
                 case .download(let node, let destination):
-                    let descriptor = try await transfer.source.descriptor(for: node)
+                    let descriptor = try await transfer.source.session.downloadDescriptor(for: node)
                     try FileManager.default.createDirectory(
                         at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
                     )
-                    try await downloadEngine().download(descriptor, to: destination, onProgress: report)
+                    try await downloads.download(descriptor, to: destination, onProgress: report)
 
                 case .upload(let file, let parent):
-                    _ = try await transfer.source.upload(
+                    _ = try await transfer.source.session.upload(
                         fileAt: file, as: transfer.name, to: parent,
-                        engine: uploadEngine(), onProgress: report
+                        engine: uploads, onProgress: report
                     )
                 }
                 transfer.state = .completed

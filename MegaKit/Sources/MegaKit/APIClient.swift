@@ -10,7 +10,7 @@ public actor APIClient {
 
     private static let maxRetries = 4
 
-    public init(gateway: URL = URL(string: MegaKit.apiGateway)!, session: URLSession = .shared) {
+    public init(gateway: URL = URL(string: "https://g.api.mega.co.nz")!, session: URLSession = .shared) {
         self.gateway = gateway
         self.session = session
         self.sequence = Int.random(in: 0..<1_000_000_000)

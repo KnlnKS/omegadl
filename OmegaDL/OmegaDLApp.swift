@@ -21,17 +21,9 @@ struct OmegaDLApp: App {
             CommandGroup(after: .appInfo) {
                 Divider()
                 if model.isSignedIn {
-                    Button {
-                        model.signOut()
-                    } label: {
-                        Label("Sign Out", systemImage: "person.crop.circle.badge.xmark")
-                    }
+                    Button("Sign Out", systemImage: "person.crop.circle.badge.xmark") { model.signOut() }
                 } else {
-                    Button {
-                        model.isSigningIn = true
-                    } label: {
-                        Label("Sign In", systemImage: "person.crop.circle.badge.plus")
-                    }
+                    Button("Sign In", systemImage: "person.crop.circle.badge.plus") { model.isSigningIn = true }
                 }
             }
         }

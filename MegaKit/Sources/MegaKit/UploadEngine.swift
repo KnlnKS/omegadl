@@ -94,26 +94,15 @@ public struct UploadEngine: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
 
-        for attempt in 0..<maximumAttempts {
-            try Task.checkCancellation()
-            do {
-                let (data, response) = try await session.upload(for: request, from: body)
-                guard let http = response as? HTTPURLResponse else { throw MegaError.malformedResponse }
-                guard http.statusCode == 200 else { throw MegaError.httpStatus(http.statusCode) }
-                if let code = Int(String(decoding: data, as: UTF8.self)), code < 0 {
-                    throw MegaError.apiCode(code)
-                }
-                return data
-            } catch let error as MegaError {
-                if attempt == maximumAttempts - 1 { throw error }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if attempt == maximumAttempts - 1 { throw error }
+        return try await retrying(attempts: maximumAttempts) {
+            let (data, response) = try await session.upload(for: request, from: body)
+            guard let http = response as? HTTPURLResponse else { throw MegaError.malformedResponse }
+            guard http.statusCode == 200 else { throw MegaError.httpStatus(http.statusCode) }
+            if let code = Int(String(decoding: data, as: UTF8.self)), code < 0 {
+                throw MegaError.apiCode(code)
             }
-            try await Task.sleep(for: .seconds(1 << attempt))
+            return data
         }
-        throw MegaError.httpStatus(0)
     }
 
     static func token(from body: Data) throws -> String {
@@ -124,12 +113,5 @@ public struct UploadEngine: Sendable {
             return String(decoding: body, as: UTF8.self)
         }
         return Base64URL.encode(body)
-    }
-}
-
-extension Data {
-    static func random(count: Int) -> Data {
-        var generator = SystemRandomNumberGenerator()
-        return Data((0..<count).map { _ in UInt8.random(in: .min ... .max, using: &generator) })
     }
 }

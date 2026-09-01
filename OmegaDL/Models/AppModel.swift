@@ -34,14 +34,6 @@ final class AppModel {
         set { if newValue == nil, !picks.isEmpty { picks.removeFirst() } }
     }
 
-    private func restoreAccount() async {
-        guard account == nil,
-              let email = UserDefaults.standard.string(forKey: Self.accountKey),
-              let stored = await Keychain.storedSession(email: email)
-        else { return }
-        account = Source(account: stored)
-    }
-
     var isSignedIn: Bool { account != nil }
 
     var accountItems: [SidebarItem] {
@@ -85,8 +77,12 @@ final class AppModel {
         return folder != rootHandle
     }
 
-    func loadAllSources() async {
-        await restoreAccount()
+    func load() async {
+        if account == nil,
+           let email = UserDefaults.standard.string(forKey: Self.accountKey),
+           let stored = await Keychain.storedSession(email: email) {
+            account = Source(account: stored)
+        }
         await account?.load()
         if selectedItemID == nil {
             selectedItemID = accountItems.first?.id

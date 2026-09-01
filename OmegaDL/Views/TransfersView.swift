@@ -130,7 +130,7 @@ struct TransferRow: View {
     private var status: String {
         switch transfer.state {
         case .queued:
-            "Waiting — \(transfer.size.formatted(.byteCount(style: .file)))"
+            "Waiting — \(byteText(transfer.size))"
         case .running:
             "\(byteText(transfer.bytesCompleted)) of \(byteText(transfer.size))"
                 + (transfer.bytesPerSecond > 0 ? " — \(rateText(transfer.bytesPerSecond))" : "")
@@ -147,46 +147,28 @@ struct TransferRow: View {
     private var action: some View {
         switch transfer.state {
         case .queued, .running:
-            Button {
-                manager.cancel(transfer)
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Cancel")
+            iconButton("xmark.circle.fill", help: "Cancel") { manager.cancel(transfer) }
 
         case .completed where !transfer.isUpload:
-            Button {
+            iconButton("magnifyingglass.circle.fill", help: "Show in Finder") {
                 manager.revealInFinder(transfer)
-            } label: {
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .help("Show in Finder")
 
         case .completed:
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.secondary)
+            icon("checkmark.circle.fill")
 
         case .failed, .cancelled:
-            Button {
-                manager.retry(transfer)
-            } label: {
-                Image(systemName: "arrow.clockwise.circle.fill")
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Try Again")
+            iconButton("arrow.clockwise.circle.fill", help: "Try Again") { manager.retry(transfer) }
         }
     }
-}
 
-func byteText(_ bytes: Int) -> String {
-    bytes.formatted(.byteCount(style: .file, allowedUnits: .all, spellsOutZero: false))
-}
+    private func icon(_ symbol: String) -> some View {
+        Image(systemName: symbol).foregroundStyle(.secondary)
+    }
 
-func rateText(_ bytesPerSecond: Double) -> String {
-    "\(byteText(Int(bytesPerSecond)))/s"
+    private func iconButton(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { icon(symbol) }
+            .buttonStyle(.plain)
+            .help(help)
+    }
 }

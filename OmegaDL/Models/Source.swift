@@ -22,7 +22,7 @@ final class Source: Identifiable {
 
     let id = UUID()
     let kind: Kind
-    private let session: MegaSession
+    let session: MegaSession
 
     private(set) var tree: MegaTree?
     private(set) var status: Status = .idle
@@ -70,31 +70,5 @@ final class Source: Identifiable {
 
     var allowsUpload: Bool {
         if case .account = kind { true } else { false }
-    }
-
-    func descriptor(for node: MegaNode) async throws -> DownloadDescriptor {
-        try await session.downloadDescriptor(for: node)
-    }
-
-    func move(_ node: MegaNode, to parent: String, recordingOrigin: Bool = false) async throws {
-        try await session.move(node, to: parent, recordingOrigin: recordingOrigin)
-    }
-
-    func delete(_ node: MegaNode) async throws {
-        try await session.delete(node)
-    }
-
-    func createFolder(named name: String, in parent: String) async throws -> MegaNode {
-        try await session.createFolder(named: name, in: parent)
-    }
-
-    func upload(
-        fileAt url: URL,
-        as name: String,
-        to parent: String,
-        engine: UploadEngine,
-        onProgress: @escaping @Sendable (Int) -> Void
-    ) async throws -> MegaNode {
-        try await session.upload(fileAt: url, as: name, to: parent, engine: engine, onProgress: onProgress)
     }
 }

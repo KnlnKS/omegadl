@@ -97,7 +97,7 @@ public actor MegaSession {
     ) async throws -> MegaNode {
         guard case .account(let account) = context else { throw MegaError.notAuthenticated }
 
-        let size = (try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int) ?? 0
+        let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         let ticket: UploadResponse = try await api.request(UploadCommand(s: size))
         guard let uploadURL = URL(string: ticket.p), uploadURL.scheme == "https" else {
             throw MegaError.malformedResponse
@@ -142,16 +142,9 @@ public actor MegaSession {
     }
 
     private func setRestoreHandle(_ origin: String, on node: MegaNode) async throws {
-        let attributeKey: Data
-        switch node.key {
-        case .file(let key): attributeKey = key.aesKey
-        case .folder(let key): attributeKey = key
-        case nil: throw MegaError.decryptionFailed
-        }
+        guard let key = node.key?.attributeKey else { throw MegaError.decryptionFailed }
 
-        let encoded = NodeDecryptor.encodedAttributes(
-            name: node.name, restoreHandle: origin, key: attributeKey
-        )
+        let encoded = NodeDecryptor.encodedAttributes(name: node.name, restoreHandle: origin, key: key)
         let _: Int = try await api.request(SetAttributesCommand(n: node.handle, at: encoded))
     }
 

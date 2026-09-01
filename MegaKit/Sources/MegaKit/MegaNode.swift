@@ -21,6 +21,13 @@ public struct MegaNode: Sendable, Identifiable, Hashable {
     public enum Key: Sendable, Hashable {
         case file(MegaFileKey)
         case folder(Data)
+
+        public var attributeKey: Data {
+            switch self {
+            case .file(let key): key.aesKey
+            case .folder(let key): key
+            }
+        }
     }
 
     public let handle: String
@@ -101,11 +108,7 @@ public struct NodeDecryptor: Sendable {
             guard let candidate else { continue }
             if key == nil { key = candidate }
 
-            let attributeKey = switch candidate {
-            case .file(let fileKey): fileKey.aesKey
-            case .folder(let folderKey): folderKey
-            }
-            if let decoded = Self.attributes(from: raw.a, key: attributeKey) {
+            if let decoded = Self.attributes(from: raw.a, key: candidate.attributeKey) {
                 key = candidate
                 attributes = decoded
                 break

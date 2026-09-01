@@ -22,12 +22,15 @@ enum Preferences {
     }
 
     static var simultaneousTransfers: Int {
-        let stored = UserDefaults.standard.integer(forKey: simultaneousTransfersKey)
-        return stored > 0 ? stored : simultaneousTransfersDefault
+        positive(simultaneousTransfersKey, or: simultaneousTransfersDefault)
     }
 
     static var connectionsPerTransfer: Int {
-        let stored = UserDefaults.standard.integer(forKey: connectionsPerTransferKey)
-        return stored > 0 ? stored : connectionsPerTransferDefault
+        positive(connectionsPerTransferKey, or: connectionsPerTransferDefault)
+    }
+
+    private static func positive(_ key: String, or fallback: Int) -> Int {
+        let stored = UserDefaults.standard.integer(forKey: key)
+        return stored > 0 ? stored : fallback
     }
 }

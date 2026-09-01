@@ -62,23 +62,15 @@ final class FolderPick: Identifiable {
     }
 
     func toggle(_ node: PickNode) {
-        if check(node) == .all { deselect(node) } else { select(node) }
+        apply(node, selecting: check(node) != .all)
     }
 
     func selectAll() {
-        select(root)
+        apply(root, selecting: true)
     }
 
     func deselectAll() {
-        deselect(root)
-    }
-
-    private func select(_ node: PickNode) {
-        apply(node, selecting: true)
-    }
-
-    private func deselect(_ node: PickNode) {
-        apply(node, selecting: false)
+        apply(root, selecting: false)
     }
 
     private func apply(_ node: PickNode, selecting: Bool) {

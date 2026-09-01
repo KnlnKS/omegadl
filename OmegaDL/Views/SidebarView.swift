@@ -7,7 +7,7 @@ struct SidebarView: View {
     var body: some View {
         List(selection: selection) {
             ForEach(model.accountItems) { item in
-                row(item)
+                label(item).tag(item.id)
             }
             if !model.accountItems.isEmpty {
                 Divider()
@@ -37,10 +37,6 @@ struct SidebarView: View {
                 ? ""
                 : "\(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
         )
-    }
-
-    private func row(_ item: SidebarItem) -> some View {
-        label(item).tag(item.id)
     }
 
     private func label(_ item: SidebarItem) -> some View {

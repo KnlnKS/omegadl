@@ -49,6 +49,10 @@ public enum MegaError: Error, Sendable, Hashable {
     static func apiCode(_ code: Int) -> MegaError {
         MegaAPIError(rawValue: code).map(MegaError.api) ?? .unrecognizedAPICode(code)
     }
+
+    var isRetryable: Bool {
+        if case .bandwidthExceeded = self { false } else { true }
+    }
 }
 
 extension MegaError: LocalizedError {

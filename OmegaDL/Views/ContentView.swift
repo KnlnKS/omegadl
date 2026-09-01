@@ -27,16 +27,12 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem {
-                Button {
-                    model.isAddingLink = true
-                } label: {
-                    Label("Add Link", systemImage: "plus")
-                }
-                .keyboardShortcut("l", modifiers: .command)
-                .help("Add a MEGA Link")
+                Button("Add Link", systemImage: "plus") { model.isAddingLink = true }
+                    .keyboardShortcut("l", modifiers: .command)
+                    .help("Add a MEGA Link")
             }
         }
-        .task { await model.loadAllSources() }
+        .task { await model.load() }
         .sheet(isPresented: $model.isAddingLink) {
             AddLinkSheet(model: model)
         }

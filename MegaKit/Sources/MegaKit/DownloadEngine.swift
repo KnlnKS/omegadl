@@ -62,30 +62,26 @@ public struct DownloadEngine: Sendable {
         let pending = MegaChunking.segments(chunks: chunks, targetBytes: segmentSize)
             .filter { range in range.contains { !state.isComplete(chunk: $0) } }
 
-        if !pending.isEmpty {
-            try await withThrowingTaskGroup(of: SegmentResult.self) { group in
-                var next = 0
-                func submit() {
-                    guard next < pending.count else { return }
-                    let range = pending[next]
-                    next += 1
-                    group.addTask {
-                        try await fetch(
-                            segment: range, chunks: chunks, descriptor: descriptor, into: file
-                        )
-                    }
+        try await withThrowingTaskGroup(of: SegmentResult.self) { group in
+            var next = 0
+            func submit() {
+                guard next < pending.count else { return }
+                let range = pending[next]
+                next += 1
+                group.addTask {
+                    try await fetch(segment: range, chunks: chunks, descriptor: descriptor, into: file)
                 }
-                for _ in 0..<min(maximumConnections, pending.count) { submit() }
+            }
+            for _ in 0..<min(maximumConnections, pending.count) { submit() }
 
-                for try await result in group {
-                    for (offset, mac) in result.macs.enumerated() {
-                        state.record(mac, forChunk: result.range.lowerBound + offset)
-                    }
-                    completed += result.byteCount
-                    onProgress(completed)
-                    try? state.write(to: stateURL)
-                    submit()
+            for try await result in group {
+                for (offset, mac) in result.macs.enumerated() {
+                    state.record(mac, forChunk: result.range.lowerBound + offset)
                 }
+                completed += result.byteCount
+                onProgress(completed)
+                try? state.write(to: stateURL)
+                submit()
             }
         }
 
@@ -141,31 +137,19 @@ public struct DownloadEngine: Sendable {
     private func fetchBytes(from url: URL, start: Int, end: Int) async throws -> Data {
         let ranged = url.appendingPathComponent("\(start)-\(end - 1)")
 
-        for attempt in 0..<maximumAttempts {
-            try Task.checkCancellation()
-            do {
-                let (data, response) = try await session.data(from: ranged)
-                guard let http = response as? HTTPURLResponse else { throw MegaError.malformedResponse }
-                switch http.statusCode {
-                case 200, 206:
-                    return data
-                case 509:
-                    let seconds = http.value(forHTTPHeaderField: "x-mega-time-left").flatMap(TimeInterval.init)
-                    throw MegaError.bandwidthExceeded(retryAfter: seconds)
-                default:
-                    throw MegaError.httpStatus(http.statusCode)
-                }
-            } catch let error as MegaError {
-                if case .bandwidthExceeded = error { throw error }
-                if attempt == maximumAttempts - 1 { throw error }
-            } catch is CancellationError {
-                throw CancellationError()
-            } catch {
-                if attempt == maximumAttempts - 1 { throw error }
+        return try await retrying(attempts: maximumAttempts) {
+            let (data, response) = try await session.data(from: ranged)
+            guard let http = response as? HTTPURLResponse else { throw MegaError.malformedResponse }
+            switch http.statusCode {
+            case 200, 206:
+                return data
+            case 509:
+                let seconds = http.value(forHTTPHeaderField: "x-mega-time-left").flatMap(TimeInterval.init)
+                throw MegaError.bandwidthExceeded(retryAfter: seconds)
+            default:
+                throw MegaError.httpStatus(http.statusCode)
             }
-            try await Task.sleep(for: .seconds(1 << attempt))
         }
-        throw MegaError.httpStatus(0)
     }
 }
 

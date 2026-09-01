@@ -134,7 +134,6 @@ struct BrowserView: View {
                 }
             }
             if uploadTarget != nil {
-                if !chosen.isEmpty { Divider() }
                 uploadButton
             }
             if isInRubbish, !chosen.isEmpty {

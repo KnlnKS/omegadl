@@ -91,17 +91,14 @@ final class TransferManager {
     private(set) var transfers: [Transfer] = []
     private(set) var isPreparing = false
 
-    private let uploads = UploadEngine()
     private var downloads = DownloadEngine(maximumConnections: Preferences.connectionsPerTransfer)
-    private var engineConnections = Preferences.connectionsPerTransfer
     private var running = 0
 
     private var maximumConcurrent: Int { Preferences.simultaneousTransfers }
 
-    private var downloadEngine: DownloadEngine {
+    private func downloadEngine() -> DownloadEngine {
         let wanted = Preferences.connectionsPerTransfer
-        if wanted != engineConnections {
-            engineConnections = wanted
+        if wanted != downloads.maximumConnections {
             downloads = DownloadEngine(maximumConnections: wanted)
         }
         return downloads
@@ -243,7 +240,7 @@ final class TransferManager {
                     try FileManager.default.createDirectory(
                         at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
                     )
-                    try await downloadEngine.download(descriptor, to: destination, onProgress: report)
+                    try await downloadEngine().download(descriptor, to: destination, onProgress: report)
 
                 case .upload(let file, let parent):
                     _ = try await transfer.source.upload(

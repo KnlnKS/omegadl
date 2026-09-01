@@ -5,7 +5,7 @@ import Foundation
 public struct DownloadEngine: Sendable {
     public static let partExtension = "omegadl-part"
 
-    let maximumConnections: Int
+    public let maximumConnections: Int
     let segmentSize: Int
     let maximumAttempts: Int
     let stateDirectory: URL

@@ -1,30 +1,6 @@
 import MegaKit
 import SwiftUI
 
-struct TransfersButton: View {
-    let manager: TransferManager
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some View {
-        Button {
-            openWindow(id: "transfers")
-        } label: {
-            Label("Transfers", systemImage: "arrow.down.circle")
-                .overlay(alignment: .center) {
-                    if manager.activeCount > 0 {
-                        TransferRing(fraction: manager.aggregateFraction)
-                    }
-                }
-        }
-        .help("Transfers")
-        .accessibilityLabel(
-            manager.activeCount == 0
-                ? "Transfers"
-                : "Transfers, \(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
-        )
-    }
-}
-
 struct TransferRing: View {
     let fraction: Double
     @Environment(\.fluidAnimation) private var fluidAnimation

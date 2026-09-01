@@ -35,9 +35,6 @@ struct ContentView: View {
                 .keyboardShortcut("l", modifiers: .command)
                 .help("Add a MEGA Link")
             }
-            ToolbarItem {
-                TransfersButton(manager: model.transfers)
-            }
         }
         .task { await model.loadAllSources() }
         .sheet(isPresented: $model.isAddingLink) {

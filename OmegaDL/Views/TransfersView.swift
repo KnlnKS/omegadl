@@ -42,7 +42,7 @@ struct TransfersView: View {
             ContentUnavailableView {
                 Label("No Transfers", systemImage: "arrow.up.arrow.down")
             } description: {
-                Text("Downloads and uploads appear here while they run.")
+                Text("Downloads and uploads appear here")
             }
         } else {
             List {

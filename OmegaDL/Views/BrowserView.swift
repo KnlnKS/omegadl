@@ -298,7 +298,7 @@ struct NodeLabel: View {
         Label {
             Text(node.name).lineLimit(1)
         } icon: {
-            Image(nsImage: NodeIcon.image(for: node))
+            Image(nsImage: NodeIcon.image(named: node.name, isDirectory: node.isDirectory))
                 .resizable()
                 .frame(width: 16, height: 16)
         }
@@ -306,10 +306,6 @@ struct NodeLabel: View {
 }
 
 enum NodeIcon {
-    static func image(for node: MegaNode) -> NSImage {
-        image(named: node.name, isDirectory: node.isDirectory)
-    }
-
     static func image(named name: String, isDirectory: Bool = false) -> NSImage {
         guard !isDirectory else { return NSWorkspace.shared.icon(for: .folder) }
         let type = UTType(filenameExtension: (name as NSString).pathExtension) ?? .data

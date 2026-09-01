@@ -48,11 +48,10 @@ public struct DownloadEngine: Sendable {
         try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
         let chunks = MegaChunking.chunks(fileSize: descriptor.size)
 
-        var state = PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
-            ?? PartialDownload(size: descriptor.size, chunkCount: chunks.count)
-        if !FileManager.default.fileExists(atPath: partURL.path) {
-            state = PartialDownload(size: descriptor.size, chunkCount: chunks.count)
-        }
+        let resumed = FileManager.default.fileExists(atPath: partURL.path)
+            ? PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
+            : nil
+        var state = resumed ?? PartialDownload(size: descriptor.size, chunkCount: chunks.count)
 
         let file = try FileSlot(url: partURL, size: descriptor.size)
         defer { file.close() }

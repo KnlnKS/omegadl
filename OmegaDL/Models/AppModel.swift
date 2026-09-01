@@ -14,21 +14,19 @@ struct SidebarItem: Identifiable, Hashable {
 final class AppModel {
     let transfers = TransferManager()
 
-    private(set) var links: [Source] = []
     private(set) var account: Source?
+    private(set) var picks: [FolderPick] = []
 
     var selectedItemID: SidebarItem.ID?
     var currentFolder: String?
     var isAddingLink = false
     var isSigningIn = false
 
-    private static let linksKey = "SavedLinks"
     private static let accountKey = "SignedInEmail"
 
-    init() {
-        links = (UserDefaults.standard.stringArray(forKey: Self.linksKey) ?? [])
-            .compactMap(MegaLink.init)
-            .compactMap { try? Source(link: $0) }
+    var currentPick: FolderPick? {
+        get { picks.first }
+        set { if newValue == nil, !picks.isEmpty { picks.removeFirst() } }
     }
 
     private func restoreAccount() async {
@@ -40,7 +38,7 @@ final class AppModel {
     }
 
     var sources: [Source] {
-        (account.map { [$0] } ?? []) + links
+        account.map { [$0] } ?? []
     }
 
     var isSignedIn: Bool { account != nil }
@@ -58,18 +56,6 @@ final class AppModel {
         }
     }
 
-    var linkItems: [SidebarItem] {
-        links.map { source in
-            SidebarItem(
-                id: source.id.uuidString,
-                sourceID: source.id,
-                rootHandle: nil,
-                name: source.name,
-                symbol: source.symbol
-            )
-        }
-    }
-
     private func symbol(for kind: MegaNode.Kind) -> String {
         switch kind {
         case .root: "cloud"
@@ -81,7 +67,7 @@ final class AppModel {
     }
 
     var selectedItem: SidebarItem? {
-        (accountItems + linkItems).first { $0.id == selectedItemID }
+        accountItems.first { $0.id == selectedItemID }
     }
 
     var selectedSource: Source? {
@@ -111,46 +97,41 @@ final class AppModel {
             }
         }
         if selectedItemID == nil {
-            selectedItemID = (accountItems + linkItems).first?.id
+            selectedItemID = accountItems.first?.id
         }
     }
 
-    @discardableResult
-    func addLinks(_ text: String) -> Int {
-        let parsed = MegaLink.links(in: text)
-        guard !parsed.isEmpty else { return 0 }
+    func addLinks(_ text: String) async -> String? {
+        let sources = MegaLink.links(in: text).compactMap { try? Source(link: $0) }
+        guard !sources.isEmpty else { return "No MEGA links found in that text." }
 
-        var firstID: SidebarItem.ID?
-        for link in parsed {
-            if let existing = links.first(where: { $0.link == link }) {
-                firstID = firstID ?? existing.id.uuidString
+        await withTaskGroup { group in
+            for source in sources {
+                group.addTask { await source.load() }
+            }
+        }
+
+        var failures = [String]()
+        for source in sources {
+            guard let tree = source.tree,
+                  let target = source.link?.selectedHandle.flatMap(tree.node) ?? tree.roots.first
+            else {
+                if case .failed(let message) = source.status {
+                    failures.append(message)
+                } else {
+                    failures.append("That link opened nothing.")
+                }
                 continue
             }
-            guard let source = try? Source(link: link) else { continue }
-            links.append(source)
-            firstID = firstID ?? source.id.uuidString
-            Task { await source.load() }
+            if target.isDirectory {
+                picks.append(FolderPick(source: source, root: target, tree: tree))
+            } else {
+                download([target], from: source)
+            }
         }
 
-        persistLinks()
-        if let firstID { select(firstID) }
-        return parsed.count
-    }
-
-    func remove(_ source: Source) {
-        links.removeAll { $0.id == source.id }
-        if selectedItem?.sourceID == source.id {
-            select((accountItems + linkItems).first?.id)
-        }
-        persistLinks()
-    }
-
-    func removeAllLinks() {
-        links.removeAll()
-        persistLinks()
-        if selectedItem == nil || linkItems.isEmpty {
-            select((accountItems + linkItems).first?.id)
-        }
+        guard let first = failures.first else { return nil }
+        return failures.count == 1 ? first : "\(failures.count) of \(sources.count) links failed."
     }
 
     func select(_ itemID: SidebarItem.ID?) {
@@ -175,16 +156,12 @@ final class AppModel {
         }
         UserDefaults.standard.removeObject(forKey: Self.accountKey)
         account = nil
-        select(linkItems.first?.id)
+        select(nil)
     }
 
-    func download(_ nodes: [MegaNode], from source: Source) {
+    func download(_ nodes: [MegaNode], from source: Source, including: Set<MegaNode.ID>? = nil) {
         guard !nodes.isEmpty else { return }
-        transfers.download(nodes, from: source, into: Preferences.downloadDirectory)
-    }
-
-    func downloadEverything(from source: Source) {
-        download(source.tree?.roots ?? [], from: source)
+        transfers.download(nodes, from: source, into: Preferences.downloadDirectory, including: including)
     }
 
     func uploadTarget(in source: Source) -> String? {
@@ -216,15 +193,8 @@ final class AppModel {
         return node.name
     }
 
-    func isSingleFile(_ source: Source) -> Bool {
-        guard let tree = source.tree else { return false }
-        return tree.roots.count == 1 && !tree.roots[0].isDirectory
-    }
-
     func contents(of source: Source) -> [MegaNode] {
-        guard let tree = source.tree else { return [] }
-        if isSingleFile(source) { return tree.roots }
-        guard let folder, tree.node(folder) != nil else { return [] }
+        guard let tree = source.tree, let folder, tree.node(folder) != nil else { return [] }
         return tree.children(of: folder)
     }
 
@@ -236,9 +206,5 @@ final class AppModel {
     func goUp(in source: Source) {
         guard canGoUp, let folder else { return }
         currentFolder = source.tree?.node(folder)?.parentHandle
-    }
-
-    private func persistLinks() {
-        UserDefaults.standard.set(links.compactMap { $0.link?.url.absoluteString }, forKey: Self.linksKey)
     }
 }

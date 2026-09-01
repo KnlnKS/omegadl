@@ -7,7 +7,8 @@ struct AddLinkSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.fluidAnimation) private var fluidAnimation
     @State private var text = ""
-    @State private var isInvalid = false
+    @State private var failure: String?
+    @State private var isOpening = false
     @State private var found: [MegaLink] = []
     @FocusState private var isFocused: Bool
 
@@ -16,7 +17,7 @@ struct AddLinkSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Add MEGA Links")
                     .font(.headline)
-                Text("Paste one link or many. Their keys stay on this Mac.")
+                Text("Paste one link or many. Files download; folders let you choose.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
@@ -26,8 +27,9 @@ struct AddLinkSheet: View {
                 .lineLimit(3...10)
                 .font(.system(.body, design: .monospaced))
                 .focused($isFocused)
+                .disabled(isOpening)
                 .onChange(of: text) {
-                    isInvalid = false
+                    failure = nil
                     found = MegaLink.links(in: text)
                 }
 
@@ -40,20 +42,28 @@ struct AddLinkSheet: View {
                 Button(addTitle, action: add)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(found.isEmpty)
+                    .disabled(found.isEmpty || isOpening)
             }
         }
         .padding(20)
         .frame(width: 480)
         .onAppear { isFocused = true }
         .animation(fluidAnimation, value: found.count)
-        .animation(fluidAnimation, value: isInvalid)
+        .animation(fluidAnimation, value: failure)
+        .animation(fluidAnimation, value: isOpening)
     }
 
     @ViewBuilder
     private var status: some View {
-        if isInvalid {
-            Label("No MEGA links found in that text.", systemImage: "exclamationmark.triangle")
+        if isOpening {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(found.count > 1 ? "Adding \(found.count) links…" : "Adding…")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        } else if let failure {
+            Label(failure, systemImage: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundStyle(.red)
         } else if found.count > 1 {
@@ -70,10 +80,15 @@ struct AddLinkSheet: View {
     }
 
     private func add() {
-        guard model.addLinks(text) > 0 else {
-            isInvalid = true
-            return
+        isOpening = true
+        Task {
+            let failure = await model.addLinks(text)
+            isOpening = false
+            if let failure {
+                self.failure = failure
+            } else {
+                dismiss()
+            }
         }
-        dismiss()
     }
 }

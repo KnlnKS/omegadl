@@ -122,19 +122,44 @@ final class TransferManager {
         transfers.filter { $0.state == .running }.reduce(0) { $0 + $1.bytesPerSecond }
     }
 
-    func download(_ nodes: [MegaNode], from source: Source, into directory: URL) {
+    func download(
+        _ nodes: [MegaNode], from source: Source, into directory: URL, including: Set<MegaNode.ID>? = nil
+    ) {
+        enqueue(nodes, from: source, into: directory, including: including, skipping: claimed())
+        pump()
+    }
+
+    private func enqueue(
+        _ nodes: [MegaNode],
+        from source: Source,
+        into directory: URL,
+        including: Set<MegaNode.ID>?,
+        skipping: Set<MegaNode.ID>
+    ) {
         for node in nodes {
             if node.isDirectory {
-                download(
+                enqueue(
                     source.tree?.children(of: node.handle) ?? [],
                     from: source,
-                    into: directory.appending(path: node.name)
+                    into: directory.appending(path: node.name),
+                    including: including,
+                    skipping: skipping
                 )
-            } else {
+            } else if including?.contains(node.id) ?? true, !skipping.contains(node.id) {
                 transfers.append(Transfer(downloading: node, to: directory.appending(path: node.name), from: source))
             }
         }
-        pump()
+    }
+
+    private func claimed() -> Set<MegaNode.ID> {
+        Set(
+            transfers.compactMap { transfer in
+                guard case .download(let node, _) = transfer.kind,
+                      transfer.state != .cancelled, !transfer.state.isFailure
+                else { return nil }
+                return node.id
+            }
+        )
     }
 
     func upload(_ urls: [URL], to source: Source, parent: String) {

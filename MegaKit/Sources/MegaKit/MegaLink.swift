@@ -26,10 +26,11 @@ public struct MegaLink: Sendable, Equatable, Hashable {
 
         if segments.count == 2, segments[0] == "folder" || segments[0] == "file" {
             let pieces = fragment.split(separator: "/").map(String.init)
+            guard let encoded = pieces.first else { return nil }
             parsed = (
                 segments[0] == "folder" ? .folder : .file,
                 segments[1],
-                pieces[0],
+                encoded,
                 pieces.count >= 3 ? pieces[pieces.count - 1] : nil
             )
         } else if segments.isEmpty {

@@ -76,6 +76,8 @@ import Testing
         "https://example.com/folder/7YdzBbYb#jH6VX0GcTngXCf6kBnQGDA",
         "https://mega.nz/folder/7YdzBbYb",
         "https://mega.nz/folder/7YdzBbYb#",
+        "https://mega.nz/folder/7YdzBbYb#/",
+        "https://mega.nz/folder/7YdzBbYb#//file/AbCdEfGh",
         "https://mega.nz/folder/#jH6VX0GcTngXCf6kBnQGDA",
         "https://mega.nz/file/AbCdEfGh#jH6VX0GcTngXCf6kBnQGDA",
         "https://mega.nz/#F!7YdzBbYb",

@@ -15,7 +15,7 @@ struct ContentView: View {
                 ContentUnavailableView {
                     Label("Nothing Open", systemImage: "shippingbox")
                 } description: {
-                    Text("Sign in to your account, or add a MEGA link to browse and download it.")
+                    Text("Sign in to your account, or add a MEGA link to download it.")
                 } actions: {
                     Button("Sign In…") { model.isSigningIn = true }
                         .buttonStyle(.borderedProminent)
@@ -43,6 +43,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $model.isSigningIn) {
             SignInSheet(model: model)
+        }
+        .sheet(item: $model.currentPick) { pick in
+            FolderPickSheet(pick: pick, model: model)
         }
     }
 }

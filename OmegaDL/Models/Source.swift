@@ -44,18 +44,6 @@ final class Source: Identifiable {
         }
     }
 
-    var symbol: String {
-        switch status {
-        case .failed: "exclamationmark.triangle"
-        case .loading: "arrow.trianglehead.2.clockwise"
-        default:
-            switch kind {
-            case .account: "person.crop.circle"
-            case .link(let link): link.kind == .folder ? "folder" : "doc"
-            }
-        }
-    }
-
     var link: MegaLink? {
         if case .link(let link) = kind { link } else { nil }
     }

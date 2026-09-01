@@ -40,7 +40,7 @@ struct TransfersView: View {
     private var content: some View {
         if manager.transfers.isEmpty {
             ContentUnavailableView {
-                Label("No Transfers", systemImage: "arrow.down.circle")
+                Label("No Transfers", systemImage: "arrow.up.arrow.down")
             } description: {
                 Text("Downloads and uploads appear here while they run.")
             }

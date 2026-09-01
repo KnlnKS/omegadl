@@ -12,7 +12,7 @@ struct SidebarItem: Identifiable, Hashable {
     let name: String
     let symbol: String
 
-    static let transfers = SidebarItem(id: .transfers, name: "Transfers", symbol: "arrow.down.circle")
+    static let transfers = SidebarItem(id: .transfers, name: "Transfers", symbol: "arrow.up.arrow.down")
 }
 
 @Observable

@@ -9,9 +9,11 @@ struct SidebarView: View {
             ForEach(model.accountItems) { item in
                 row(item)
             }
-            Section {
-                transfersRow
+            if !model.accountItems.isEmpty {
+                Divider()
+                    .selectionDisabled()
             }
+            transfersRow
         }
         .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
     }

@@ -88,7 +88,7 @@ struct TransferRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
-                if transfer.state == .running {
+                if transfer.state == .running || transfer.state == .paused {
                     ProgressView(value: transfer.fraction)
                         .progressViewStyle(.linear)
                 }
@@ -114,7 +114,10 @@ struct TransferRow: View {
                 Button("Show in Finder") { manager.revealInFinder(transfer) }
                 Divider()
             }
-            if transfer.isFinished, transfer.state != .completed {
+            if transfer.state == .paused {
+                Button("Resume") { manager.retry(transfer) }
+                Divider()
+            } else if transfer.isFinished, transfer.state != .completed {
                 Button("Try Again") { manager.retry(transfer) }
                 Divider()
             }
@@ -134,6 +137,8 @@ struct TransferRow: View {
         case .running:
             "\(byteText(transfer.bytesCompleted)) of \(byteText(transfer.size))"
                 + (transfer.bytesPerSecond > 0 ? " — \(rateText(transfer.bytesPerSecond))" : "")
+        case .paused:
+            "Paused — \(byteText(transfer.bytesCompleted)) of \(byteText(transfer.size))"
         case .completed:
             byteText(transfer.size)
         case .cancelled:
@@ -148,6 +153,9 @@ struct TransferRow: View {
         switch transfer.state {
         case .queued, .running:
             iconButton("xmark.circle.fill", help: "Cancel") { manager.cancel(transfer) }
+
+        case .paused:
+            iconButton("arrow.clockwise.circle.fill", help: "Resume") { manager.retry(transfer) }
 
         case .completed where !transfer.isUpload:
             iconButton("magnifyingglass.circle.fill", help: "Show in Finder") {

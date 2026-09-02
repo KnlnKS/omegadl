@@ -13,6 +13,7 @@ final class Transfer: Identifiable {
     enum State: Equatable {
         case queued
         case running
+        case paused
         case completed
         case failed(String)
         case cancelled
@@ -42,6 +43,15 @@ final class Transfer: Identifiable {
         self.size = node.size
     }
 
+    init(restoring record: TransferStore.Record) {
+        self.kind = .download(handle: record.handle, destination: record.destination)
+        self.ref = record.ref
+        self.name = record.name
+        self.size = record.size
+        self.state = .paused
+        self.bytesCompleted = record.bytesCompleted
+    }
+
     init(uploading file: URL, to parent: String, from source: Source) {
         self.kind = .upload(file: file, parent: parent)
         self.ref = source.ref
@@ -64,8 +74,20 @@ final class Transfer: Identifiable {
     var isFinished: Bool {
         switch state {
         case .completed, .failed, .cancelled: true
-        case .queued, .running: false
+        case .queued, .running, .paused: false
         }
+    }
+
+    var isActive: Bool {
+        state == .queued || state == .running
+    }
+
+    var record: TransferStore.Record? {
+        guard case .download(let handle, let destination) = kind, !isFinished else { return nil }
+        return TransferStore.Record(
+            ref: ref, handle: handle, name: name, size: size,
+            destination: destination, bytesCompleted: bytesCompleted
+        )
     }
 
     func record(bytes: Int) {
@@ -98,6 +120,16 @@ final class TransferManager {
     private var running = 0
     private var refreshes: [Source.ID: Task<Void, Never>] = [:]
     private var sources: [SourceRef: Source] = [:]
+    private var lastSave = ContinuousClock.now
+
+    init() {
+        transfers = TransferStore.load().map(Transfer.init(restoring:))
+    }
+
+    private func save() {
+        lastSave = .now
+        TransferStore.save(transfers.compactMap(\.record))
+    }
 
     func register(_ source: Source) {
         sources[source.ref] = source
@@ -121,11 +153,11 @@ final class TransferManager {
     }
 
     var activeCount: Int {
-        transfers.count { !$0.isFinished }
+        transfers.count(where: \.isActive)
     }
 
     var aggregateFraction: Double {
-        let active = transfers.filter { !$0.isFinished }
+        let active = transfers.filter(\.isActive)
         let total = active.reduce(0) { $0 + $1.size }
         guard total > 0 else { return 0 }
         return Double(active.reduce(0) { $0 + $1.bytesCompleted }) / Double(total)
@@ -141,6 +173,7 @@ final class TransferManager {
         register(source)
         enqueue(nodes, from: source, into: directory, including: including, skipping: claimed())
         pump()
+        save()
     }
 
     private func enqueue(
@@ -205,25 +238,29 @@ final class TransferManager {
 
     func cancel(_ transfer: Transfer) {
         transfer.task?.cancel()
-        if transfer.state == .queued {
+        if transfer.state == .queued || transfer.state == .paused {
             transfer.state = .cancelled
         }
+        save()
     }
 
     func retry(_ transfer: Transfer) {
-        guard transfer.isFinished, transfer.state != .completed else { return }
+        guard transfer.state == .paused || (transfer.isFinished && transfer.state != .completed) else { return }
         transfer.state = .queued
         transfer.bytesPerSecond = 0
         pump()
+        save()
     }
 
     func clearFinished() {
         transfers.removeAll { $0.isFinished }
+        save()
     }
 
     func remove(_ transfer: Transfer) {
         cancel(transfer)
         transfers.removeAll { $0.id == transfer.id }
+        save()
     }
 
     func revealInFinder(_ transfer: Transfer) {
@@ -278,6 +315,7 @@ final class TransferManager {
                 transfer.state = .failed(error.localizedDescription)
             }
             running -= 1
+            save()
             pump()
             if transfer.isUpload, let source = sources[transfer.ref] { scheduleRefresh(of: source) }
         }
@@ -294,5 +332,6 @@ final class TransferManager {
 
     private func report(bytes: Int, for id: Transfer.ID) {
         transfers.first { $0.id == id }?.record(bytes: bytes)
+        if ContinuousClock.now - lastSave > .seconds(2) { save() }
     }
 }

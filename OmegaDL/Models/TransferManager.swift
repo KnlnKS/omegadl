@@ -82,7 +82,7 @@ final class Transfer: Identifiable {
         state == .queued || state == .running
     }
 
-    var record: TransferStore.Record? {
+    var snapshot: TransferStore.Record? {
         guard case .download(let handle, let destination) = kind, !isFinished else { return nil }
         return TransferStore.Record(
             ref: ref, handle: handle, name: name, size: size,
@@ -107,7 +107,7 @@ final class Transfer: Identifiable {
     }
 }
 
-struct TransferError: LocalizedError {
+private struct TransferError: LocalizedError {
     let errorDescription: String?
 }
 
@@ -128,7 +128,7 @@ final class TransferManager {
 
     private func save() {
         lastSave = .now
-        TransferStore.save(transfers.compactMap(\.record))
+        TransferStore.save(transfers.compactMap(\.snapshot))
     }
 
     func register(_ source: Source) {

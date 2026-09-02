@@ -60,15 +60,24 @@ final class Source: Identifiable {
         }
     }
 
+    private var loading: Task<Void, Never>?
+
     func load() async {
+        if let loading { return await loading.value }
         guard status == .idle || status.isFailure else { return }
-        status = .loading
-        do {
-            tree = try await session.loadTree()
-            status = .loaded
-        } catch {
-            status = .failed(error.localizedDescription)
+
+        let task = Task {
+            status = .loading
+            do {
+                tree = try await session.loadTree()
+                status = .loaded
+            } catch {
+                status = .failed(error.localizedDescription)
+            }
         }
+        loading = task
+        await task.value
+        loading = nil
     }
 
     private(set) var isRefreshing = false

@@ -293,6 +293,9 @@ final class TransferManager {
                 case .download(let handle, let destination):
                     await source.load()
                     guard let node = source.tree?.node(handle) else {
+                        if case .failed(let message) = source.status {
+                            throw TransferError(errorDescription: message)
+                        }
                         throw TransferError(errorDescription: "That file is no longer available.")
                     }
                     let descriptor = try await source.session.downloadDescriptor(for: node)

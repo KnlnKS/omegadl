@@ -2,6 +2,11 @@ import Foundation
 import MegaKit
 import Observation
 
+enum SourceRef: Codable, Hashable {
+    case link(URL)
+    case account(String)
+}
+
 @Observable
 final class Source: Identifiable {
     enum Kind: Sendable {
@@ -46,6 +51,13 @@ final class Source: Identifiable {
 
     var link: MegaLink? {
         if case .link(let link) = kind { link } else { nil }
+    }
+
+    var ref: SourceRef {
+        switch kind {
+        case .link(let link): .link(link.url)
+        case .account(let account): .account(account.email)
+        }
     }
 
     func load() async {

@@ -81,7 +81,9 @@ final class AppModel {
         if account == nil,
            let email = UserDefaults.standard.string(forKey: Self.accountKey),
            let stored = await Keychain.storedSession(email: email) {
-            account = Source(account: stored)
+            let source = Source(account: stored)
+            account = source
+            transfers.register(source)
         }
         await account?.load()
         if selectedItemID == nil {
@@ -132,6 +134,7 @@ final class AppModel {
         UserDefaults.standard.set(session.email, forKey: Self.accountKey)
         let source = Source(account: session)
         account = source
+        transfers.register(source)
         Task {
             await source.load()
             select(accountItems.first?.id)

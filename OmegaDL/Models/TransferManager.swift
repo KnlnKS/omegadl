@@ -6,7 +6,7 @@ import Observation
 @Observable
 final class Transfer: Identifiable {
     enum Kind {
-        case download(node: MegaNode, destination: URL)
+        case download(handle: String, destination: URL)
         case upload(file: URL, parent: String)
     }
 
@@ -24,7 +24,7 @@ final class Transfer: Identifiable {
 
     let id = UUID()
     let kind: Kind
-    let source: Source
+    let ref: SourceRef
     let name: String
     let size: Int
 
@@ -36,15 +36,15 @@ final class Transfer: Identifiable {
     private var lastSample: (bytes: Int, time: ContinuousClock.Instant)?
 
     init(downloading node: MegaNode, to destination: URL, from source: Source) {
-        self.kind = .download(node: node, destination: destination)
-        self.source = source
+        self.kind = .download(handle: node.handle, destination: destination)
+        self.ref = source.ref
         self.name = node.name
         self.size = node.size
     }
 
     init(uploading file: URL, to parent: String, from source: Source) {
         self.kind = .upload(file: file, parent: parent)
-        self.source = source
+        self.ref = source.ref
         self.name = file.lastPathComponent
         self.size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
     }
@@ -85,6 +85,10 @@ final class Transfer: Identifiable {
     }
 }
 
+struct TransferError: LocalizedError {
+    let errorDescription: String?
+}
+
 @Observable
 final class TransferManager {
     private(set) var transfers: [Transfer] = []
@@ -93,6 +97,21 @@ final class TransferManager {
     private var uploads = UploadEngine(maximumConnections: Preferences.connectionsPerTransfer)
     private var running = 0
     private var refreshes: [Source.ID: Task<Void, Never>] = [:]
+    private var sources: [SourceRef: Source] = [:]
+
+    func register(_ source: Source) {
+        sources[source.ref] = source
+    }
+
+    private func source(for ref: SourceRef) throws -> Source {
+        if let existing = sources[ref] { return existing }
+        guard case .link(let url) = ref, let link = MegaLink(url.absoluteString) else {
+            throw TransferError(errorDescription: "Sign in to resume this download.")
+        }
+        let source = try Source(link: link)
+        sources[ref] = source
+        return source
+    }
 
     private func syncEngines() {
         let wanted = Preferences.connectionsPerTransfer
@@ -119,6 +138,7 @@ final class TransferManager {
     func download(
         _ nodes: [MegaNode], from source: Source, into directory: URL, including: Set<MegaNode.ID>? = nil
     ) {
+        register(source)
         enqueue(nodes, from: source, into: directory, including: including, skipping: claimed())
         pump()
     }
@@ -148,15 +168,16 @@ final class TransferManager {
     private func claimed() -> Set<MegaNode.ID> {
         Set(
             transfers.compactMap { transfer in
-                guard case .download(let node, _) = transfer.kind,
+                guard case .download(let handle, _) = transfer.kind,
                       transfer.state != .cancelled, !transfer.state.isFailure
                 else { return nil }
-                return node.id
+                return handle
             }
         )
     }
 
     func upload(_ urls: [URL], to source: Source, parent: String) {
+        register(source)
         Task {
             for url in urls {
                 await enqueue(url, to: source, parent: parent)
@@ -230,16 +251,21 @@ final class TransferManager {
             }
 
             do {
+                let source = try self.source(for: transfer.ref)
                 switch transfer.kind {
-                case .download(let node, let destination):
-                    let descriptor = try await transfer.source.session.downloadDescriptor(for: node)
+                case .download(let handle, let destination):
+                    await source.load()
+                    guard let node = source.tree?.node(handle) else {
+                        throw TransferError(errorDescription: "That file is no longer available.")
+                    }
+                    let descriptor = try await source.session.downloadDescriptor(for: node)
                     try FileManager.default.createDirectory(
                         at: destination.deletingLastPathComponent(), withIntermediateDirectories: true
                     )
                     try await downloads.download(descriptor, to: destination, onProgress: report)
 
                 case .upload(let file, let parent):
-                    _ = try await transfer.source.session.upload(
+                    _ = try await source.session.upload(
                         fileAt: file, as: transfer.name, to: parent,
                         engine: uploads, onProgress: report
                     )
@@ -253,7 +279,7 @@ final class TransferManager {
             }
             running -= 1
             pump()
-            if transfer.isUpload { scheduleRefresh(of: transfer.source) }
+            if transfer.isUpload, let source = sources[transfer.ref] { scheduleRefresh(of: source) }
         }
     }
 

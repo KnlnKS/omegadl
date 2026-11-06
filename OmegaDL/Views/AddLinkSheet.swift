@@ -7,9 +7,9 @@ struct AddLinkSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.fluidAnimation) private var fluidAnimation
     @State private var text = ""
+    @State private var found: [MegaLink] = []
     @State private var failure: String?
     @State private var isOpening = false
-    @State private var found: [MegaLink] = []
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -22,16 +22,12 @@ struct AddLinkSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            TextField("https://mega.nz/folder/…#…", text: $text, axis: .vertical)
+            TextField("https://mega.nz/folder/…#…", text: input, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3...10)
                 .font(.system(.body, design: .monospaced))
                 .focused($isFocused)
                 .disabled(isOpening)
-                .onChange(of: text) {
-                    failure = nil
-                    found = MegaLink.links(in: text)
-                }
 
             status
 
@@ -39,6 +35,7 @@ struct AddLinkSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
+                    .disabled(isOpening)
                 Button(addTitle, action: add)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
@@ -75,6 +72,17 @@ struct AddLinkSheet: View {
         }
     }
 
+    /// Typing re-reads the links; text set after a failure keeps its message.
+    private var input: Binding<String> {
+        Binding {
+            text
+        } set: {
+            text = $0
+            found = MegaLink.links(in: $0)
+            failure = nil
+        }
+    }
+
     private var addTitle: String {
         found.count > 1 ? "Add \(found.count) Links" : "Add"
     }
@@ -82,13 +90,12 @@ struct AddLinkSheet: View {
     private func add() {
         isOpening = true
         Task {
-            let failure = await model.addLinks(text)
+            let failures = await model.addLinks(found)
             isOpening = false
-            if let failure {
-                self.failure = failure
-            } else {
-                dismiss()
-            }
+            guard let first = failures.first else { return dismiss() }
+            found = failures.map(\.link)
+            text = found.map(\.url.absoluteString).joined(separator: "\n")
+            failure = failures.count == 1 ? first.message : "\(failures.count) links could not be opened. \(first.message)"
         }
     }
 }

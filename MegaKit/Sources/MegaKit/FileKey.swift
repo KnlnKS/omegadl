@@ -1,28 +1,35 @@
 import Foundation
 
+/// A file's AES key, CTR nonce and condensed MAC: 32 bytes inline, no heap storage.
 public struct MegaFileKey: Sendable, Hashable {
-    public let aesKey: Data
-    public let nonce: Data
-    public let metaMAC: Data
+    public let aesKey: AESBlock
+    public let nonce: SIMD8<UInt8>
+    public let metaMAC: SIMD8<UInt8>
 
-    public init?(packed: Data) {
-        guard packed.count == 32 else { return nil }
-        let head = Data(packed.prefix(16))
-        let tail = Data(packed.suffix(16))
-        self.aesKey = head.xor(tail)
-        self.nonce = Data(tail.prefix(8))
-        self.metaMAC = Data(tail.suffix(8))
-    }
-
-    public init(aesKey: Data, nonce: Data, metaMAC: Data) {
-        precondition(aesKey.count == 16 && nonce.count == 8 && metaMAC.count == 8)
+    public init(aesKey: AESBlock, nonce: SIMD8<UInt8>, metaMAC: SIMD8<UInt8>) {
         self.aesKey = aesKey
         self.nonce = nonce
         self.metaMAC = metaMAC
     }
 
-    public var packed: Data {
-        let tail = nonce + metaMAC
-        return aesKey.xor(tail) + tail
+    /// MEGA ships the key as `aesKey ^ tail` followed by `tail`, where `tail` is nonce then MAC.
+    init(head: AESBlock, tail: AESBlock) {
+        self.init(aesKey: head ^ tail, nonce: tail.lowHalf, metaMAC: tail.highHalf)
+    }
+
+    init?(packed bytes: UnsafeRawBufferPointer) {
+        guard bytes.count == 32 else { return nil }
+        self.init(head: bytes.loadUnaligned(as: AESBlock.self), tail: bytes.loadUnaligned(fromByteOffset: 16, as: AESBlock.self))
+    }
+
+    var tail: AESBlock { AESBlock(lowHalf: nonce, highHalf: metaMAC) }
+
+    var packed: (head: AESBlock, tail: AESBlock) { (aesKey ^ tail, tail) }
+
+    /// Chunk MACs run CBC with the nonce repeated as the IV.
+    var macIV: AESBlock { AESBlock(lowHalf: nonce, highHalf: nonce) }
+
+    func counter(atBlock block: Int) -> AESBlock {
+        AESBlock(lowHalf: nonce, highHalf: unsafeBitCast(UInt64(block).bigEndian, to: SIMD8<UInt8>.self))
     }
 }

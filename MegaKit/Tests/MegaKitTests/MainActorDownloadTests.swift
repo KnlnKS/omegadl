@@ -9,9 +9,9 @@ import Testing
         let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
 
-        let session = try MegaSession(link: try #require(MegaLink(Live.folderURL)))
+        let session = MegaSession(link: try #require(MegaLink(Live.folderURL)))
         let tree = try await session.loadTree()
-        let node = try #require(tree.nodesByHandle[Live.largeFileHandle])
+        let node = try #require(tree.node(NodeHandle(Live.largeFileHandle)!))
         let target = try await session.downloadDescriptor(for: node)
 
         let destination = scratch.appending(path: target.name)

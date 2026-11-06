@@ -3,34 +3,44 @@ import MegaKit
 import SwiftUI
 
 struct BrowserView: View {
-    @Bindable var model: AppModel
-    let source: Source
+    let model: AppModel
+    let account: Source
+    let root: MegaNode
 
+    @State private var folderHandle: NodeHandle?
     @State private var selection = Set<MegaNode.ID>()
     @State private var isDropTargeted = false
     @State private var pendingDeletion: [MegaNode] = []
     @State private var actionError: String?
+    @State private var isWorking = false
     @Environment(\.fluidAnimation) private var fluidAnimation
     @Environment(\.settleAnimation) private var settleAnimation
 
-    private var uploadTarget: String? { model.uploadTarget(in: source) }
-    private var isInRubbish: Bool { model.isInRubbish(source) }
+    /// The open folder, or the root once that folder has gone from it.
+    private var folder: MegaNode {
+        guard let folderHandle, let node = root.tree.node(folderHandle), root.contains(node) else { return root }
+        return node
+    }
+
+    private var canUpload: Bool { root.kind == .root }
+    private var rubbish: MegaNode? { root.tree.roots.first { $0.kind == .rubbish } }
 
     var body: some View {
-        content
-            .navigationTitle(model.title(for: source))
-            .task { await source.load() }
-            .toolbar { toolbar }
+        let folder = folder
+        let items = folder.children
+        content(items)
+            .navigationTitle(folder.name)
+            .toolbar { toolbar(canGoUp: folder.id != root.id) }
             .background {
                 Group {
                     Button("Open Selection") { openSelection() }
                         .keyboardShortcut(.downArrow, modifiers: .command)
                     Button("Download Selection") { download(selectedNodes) }
                         .keyboardShortcut("d", modifiers: .command)
-                        .disabled(selection.isEmpty)
+                        .disabled(!items.contains { selection.contains($0.id) })
                     Button("Upload") { chooseUploads() }
                         .keyboardShortcut("u", modifiers: .command)
-                        .disabled(uploadTarget == nil)
+                        .disabled(!canUpload)
                 }
                 .opacity(0)
                 .accessibilityHidden(true)
@@ -39,8 +49,8 @@ struct BrowserView: View {
                 withAnimation(settleAnimation) { isDropTargeted = targeted }
             }
             .overlay {
-                if isDropTargeted, uploadTarget != nil {
-                    DropIndicator(folder: model.title(for: source))
+                if isDropTargeted, canUpload {
+                    DropIndicator(folder: folder.name)
                 }
             }
             .confirmationDialog(
@@ -64,29 +74,11 @@ struct BrowserView: View {
     }
 
     @ViewBuilder
-    private var content: some View {
-        switch source.status {
-        case .idle, .loading:
-            ProgressView()
-                .controlSize(.large)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-        case .failed(let message):
-            ContentUnavailableView {
-                Label("Could Not Open Link", systemImage: "exclamationmark.triangle")
-            } description: {
-                Text(message)
-            } actions: {
-                Button("Try Again") { Task { await source.load() } }
-            }
-
-        case .loaded:
-            let items = model.contents(of: source)
-            if items.isEmpty {
-                emptyFolder
-            } else {
-                table(items)
-            }
+    private func content(_ items: [MegaNode]) -> some View {
+        if items.isEmpty {
+            emptyFolder
+        } else {
+            table(items)
         }
     }
 
@@ -96,7 +88,7 @@ struct BrowserView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(.rect)
 
-        if uploadTarget != nil {
+        if canUpload {
             view.contextMenu { uploadButton }
         } else {
             view
@@ -132,19 +124,25 @@ struct BrowserView: View {
                     download(chosen)
                 }
             }
-            if uploadTarget != nil {
+            if canUpload {
                 uploadButton
             }
-            if isInRubbish, !chosen.isEmpty {
+            if root.kind == .rubbish, !chosen.isEmpty {
                 Divider()
-                if let target = restoreTarget(for: chosen) {
-                    Button("Put Back") { putBack(chosen) }
-                        .help("Restore to \(target)")
+                Group {
+                    if let target = restoreLabel(for: chosen) {
+                        Button("Put Back") { perform { try await account.session.putBack(chosen) } }
+                            .help("Restore to \(target)")
+                    }
+                    Button("Delete Immediately…", role: .destructive) { pendingDeletion = chosen }
                 }
-                Button("Delete Immediately…", role: .destructive) { pendingDeletion = chosen }
-            } else if source.allowsUpload, !chosen.isEmpty, model.rubbishHandle(in: source) != nil {
+                .disabled(isWorking)
+            } else if canUpload, !chosen.isEmpty, let rubbish {
                 Divider()
-                Button("Move to Rubbish Bin") { moveToRubbish(chosen) }
+                Button("Move to Rubbish Bin") {
+                    perform { try await account.session.move(chosen, to: rubbish.id, recordingOrigin: true) }
+                }
+                .disabled(isWorking)
             }
 
         } primaryAction: { ids in
@@ -159,47 +157,47 @@ struct BrowserView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
+    private func toolbar(canGoUp: Bool) -> some ToolbarContent {
         ToolbarItem(placement: .navigation) {
-            Button("Back", systemImage: "chevron.left") { model.goUp(in: source) }
-                .disabled(!model.canGoUp)
+            Button("Back", systemImage: "chevron.left") { withAnimation(fluidAnimation) { folderHandle = folder.parent?.id } }
+                .disabled(!canGoUp)
                 .keyboardShortcut(.upArrow, modifiers: .command)
                 .help("Enclosing Folder")
         }
         ToolbarItem(placement: .navigation) {
-            Button("Refresh", systemImage: "arrow.clockwise") { Task { await source.refresh() } }
-                .disabled(source.isRefreshing || source.status != .loaded)
+            Button("Refresh", systemImage: "arrow.clockwise") { perform {} }
+                .disabled(isWorking)
                 .keyboardShortcut("r", modifiers: .command)
                 .help("Refresh")
         }
     }
 
     private var selectedNodes: [MegaNode] {
-        model.contents(of: source).filter { selection.contains($0.id) }
+        folder.children.filter { selection.contains($0.id) }
     }
 
     private func chooseUploads() {
-        guard let parent = uploadTarget else { return }
+        guard canUpload else { return }
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         panel.prompt = "Upload"
-        panel.message = "Choose files or folders to upload to \(model.title(for: source))."
+        panel.message = "Choose files or folders to upload to \(folder.name)."
 
         guard panel.runModal() == .OK else { return }
-        model.transfers.upload(panel.urls, to: source, parent: parent)
+        _ = accept(panel.urls)
     }
 
     private func accept(_ urls: [URL]) -> Bool {
-        guard let parent = uploadTarget else { return false }
-        model.transfers.upload(urls, to: source, parent: parent)
+        guard canUpload else { return false }
+        model.transfers.upload(urls, to: account, parent: folder.id)
         return true
     }
 
     private func download(_ nodes: [MegaNode]) {
-        model.download(nodes, from: source)
+        model.download(nodes, from: account)
     }
 
     private var deletionPrompt: String {
@@ -208,53 +206,37 @@ struct BrowserView: View {
             : "Delete \(pendingDeletion.count) items permanently?"
     }
 
-    private func restoreTarget(for nodes: [MegaNode]) -> String? {
-        let targets = nodes.compactMap { model.restoreDestination(for: $0, in: source) }
+    private func restoreLabel(for nodes: [MegaNode]) -> String? {
+        let targets = nodes.compactMap(\.restoreTarget)
         guard targets.count == nodes.count else { return nil }
-        return Set(targets.map(\.name)).count == 1 ? targets[0].name : "their original folders"
-    }
-
-    private func putBack(_ nodes: [MegaNode]) {
-        perform(nodes) { node in
-            guard let target = model.restoreDestination(for: node, in: source) else { return }
-            try await source.session.move(node, to: target.handle)
-        }
-    }
-
-    private func moveToRubbish(_ nodes: [MegaNode]) {
-        guard let bin = model.rubbishHandle(in: source) else { return }
-        perform(nodes) { node in
-            try await source.session.move(node, to: bin, recordingOrigin: true)
-        }
+        return Set(targets.map(\.id)).count == 1 ? targets[0].name : "their original folders"
     }
 
     private func delete(_ nodes: [MegaNode]) {
         pendingDeletion = []
-        perform(nodes) { node in try await source.session.delete(node) }
+        perform { try await account.session.delete(nodes) }
     }
 
-    private func perform(_ nodes: [MegaNode], _ action: @escaping (MegaNode) async throws -> Void) {
+    /// Runs `change`, then refreshes, reporting the first failure.
+    private func perform(_ change: @escaping () async throws -> Void) {
+        isWorking = true
         Task {
-            do {
-                for node in nodes { try await action(node) }
-            } catch {
-                actionError = error.localizedDescription
-            }
-            selection.removeAll()
-            await source.refresh()
+            var failure: (any Error)?
+            do { try await change() } catch { failure = error }
+            do { try await account.refresh() } catch { failure = failure ?? error }
+            isWorking = false
+            actionError = failure?.localizedDescription
         }
     }
 
     private func openSelection() {
-        if let node = selectedNodes.first, node.isDirectory {
-            open(node)
-        }
+        if let node = selectedNodes.first { open(node) }
     }
 
     private func open(_ node: MegaNode) {
         guard node.isDirectory else { return }
         withAnimation(fluidAnimation) {
-            model.open(node)
+            folderHandle = node.id
         }
         selection.removeAll()
     }

@@ -34,7 +34,7 @@ struct SettingsView: View {
 
             Section {
                 Picker("Simultaneous transfers", selection: $simultaneousTransfers) {
-                    ForEach(1...6, id: \.self) { Text($0.formatted()).tag($0) }
+                    ForEach(1...Preferences.simultaneousTransfersLimit, id: \.self) { Text($0.formatted()).tag($0) }
                 }
                 Picker("Connections per transfer", selection: $connectionsPerTransfer) {
                     ForEach([1, 2, 4, 6, 8, 12, 16], id: \.self) { Text($0.formatted()).tag($0) }

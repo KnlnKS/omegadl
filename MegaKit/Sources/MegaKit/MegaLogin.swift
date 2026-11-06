@@ -1,3 +1,4 @@
+import CommonCrypto
 import Foundation
 
 public struct AccountCredentials: Sendable {
@@ -13,10 +14,36 @@ public struct AccountCredentials: Sendable {
 }
 
 public struct AccountSession: Sendable, Codable, Hashable {
-    public let sessionID: String
-    public let masterKey: Data
-    public let userHandle: String
+    let sessionID: String
+    let masterKey: AESBlock
+    let userHandle: String
     public let email: String
+}
+
+/// The master key is stored as base64url, the way MEGA writes keys.
+extension AccountSession {
+    private enum CodingKeys: String, CodingKey {
+        case sessionID, masterKey, userHandle, email
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        guard let masterKey = Base64URL.decodeBlock(try container.decode(String.self, forKey: .masterKey)) else {
+            throw DecodingError.dataCorruptedError(forKey: .masterKey, in: container, debugDescription: "Not a 16-byte key")
+        }
+        self.init(
+            sessionID: try container.decode(String.self, forKey: .sessionID), masterKey: masterKey,
+            userHandle: try container.decode(String.self, forKey: .userHandle), email: try container.decode(String.self, forKey: .email)
+        )
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionID, forKey: .sessionID)
+        try container.encode(Base64URL.encode(masterKey), forKey: .masterKey)
+        try container.encode(userHandle, forKey: .userHandle)
+        try container.encode(email, forKey: .email)
+    }
 }
 
 struct PreLoginCommand: Encodable, Sendable {
@@ -56,17 +83,18 @@ public enum MegaLogin {
     static let legacyHashRounds = 16_384
     static let derivationIterations = 100_000
 
-    static let legacySeed = Data([
+    static let legacySeed = AESBlock(
         0x93, 0xC4, 0x67, 0xE3, 0x7D, 0xB0, 0xC7, 0xA4,
-        0xD1, 0xBE, 0x3F, 0x81, 0x01, 0x52, 0xCB, 0x56,
-    ])
+        0xD1, 0xBE, 0x3F, 0x81, 0x01, 0x52, 0xCB, 0x56
+    )
 
     @concurrent
-    public static func logIn(_ credentials: AccountCredentials, api: APIClient) async throws -> AccountSession {
+    public static func logIn(_ credentials: AccountCredentials) async throws -> AccountSession {
+        let api = APIClient()
         let email = credentials.email.lowercased()
         let pre: PreLoginResponse = try await api.request(PreLoginCommand(user: email))
 
-        let passwordKey: Data
+        let passwordKey: AESBlock
         let userHash: String
 
         if pre.v >= 2 {
@@ -75,8 +103,8 @@ public enum MegaLogin {
                 password: Data(credentials.password.utf8), salt: salt,
                 iterations: derivationIterations, length: 32
             )
-            passwordKey = Data(derived.prefix(16))
-            userHash = Base64URL.encode(Data(derived.suffix(16)))
+            passwordKey = derived.withUnsafeBytes { AESBlock(UnsafeRawBufferPointer(rebasing: $0.prefix(16)))! }
+            userHash = Base64URL.encode(derived.suffix(16))
         } else {
             passwordKey = legacyKey(password: credentials.password)
             userHash = legacyUserHash(email: email, key: passwordKey)
@@ -86,70 +114,60 @@ public enum MegaLogin {
             LoginCommand(user: email, uh: userHash, mfa: credentials.secondFactorCode)
         )
 
-        guard let wrappedMasterKey = Base64URL.decode(login.k), wrappedMasterKey.count == 16 else {
-            throw MegaError.malformedResponse
-        }
-        let masterKey = AES128.ecbDecrypt(wrappedMasterKey, key: passwordKey)
+        guard let wrappedMasterKey = Base64URL.decodeBlock(login.k) else { throw MegaError.malformedResponse }
+        let masterKey = AES.decrypt(wrappedMasterKey, key: passwordKey)
         let sessionID = try resolveSessionID(login, masterKey: masterKey)
 
-        await api.setSessionID(sessionID)
-        let user: UserResponse = try await api.request(UserCommand())
+        let user: UserResponse = try await APIClient(.account(sessionID: sessionID)).request(UserCommand())
 
         return AccountSession(
             sessionID: sessionID, masterKey: masterKey, userHandle: user.u, email: email
         )
     }
 
-    static func resolveSessionID(_ login: LoginResponse, masterKey: Data) throws -> String {
+    static func resolveSessionID(_ login: LoginResponse, masterKey: AESBlock) throws -> String {
         if let tsid = login.tsid {
             guard let raw = Base64URL.decode(tsid), raw.count >= 32,
-                  AES128.ecbEncrypt(Data(raw.prefix(16)), key: masterKey) == Data(raw.suffix(16))
+                  raw.withUnsafeBytes({
+                      AES.encrypt($0.loadUnaligned(as: AESBlock.self), key: masterKey)
+                          == $0.loadUnaligned(fromByteOffset: $0.count - 16, as: AESBlock.self)
+                  })
             else { throw MegaError.decryptionFailed }
             return tsid
         }
 
         guard let privk = login.privk.flatMap(Base64URL.decode), privk.count % 16 == 0,
               let csid = login.csid.flatMap(Base64URL.decode),
-              let key = RSAPrivateKey(privkBlob: AES128.ecbDecrypt(privk, key: masterKey)),
+              let key = RSAPrivateKey(privkBlob: AES.crypt(kCCDecrypt, mode: kCCModeECB, key: masterKey, privk)),
               let ciphertext = MPI.value(csid)
         else { throw MegaError.decryptionFailed }
 
-        return Base64URL.encode(Data(key.decrypt(ciphertext).prefix(43)))
+        return Base64URL.encode(key.decrypt(ciphertext).prefix(43))
     }
 
-    static func legacyKey(password: String) -> Data {
-        let bytes = Data(password.utf8)
-        let blocks = stride(from: 0, to: max(bytes.count, 1), by: 16).map { start -> Data in
-            var block = Data(bytes[start..<min(start + 16, bytes.count)])
-            block.append(Data(count: 16 - block.count))
+    static func legacyKey(password: String) -> AESBlock {
+        let bytes = Array(password.utf8)
+        let blocks = stride(from: 0, to: max(bytes.count, 1), by: 16).map { start in
+            var block = AESBlock()
+            for (index, byte) in bytes[start..<min(start + 16, bytes.count)].enumerated() { block[index] = byte }
             return block
         }
 
         var key = legacySeed
         for _ in 0..<legacyKeyRounds {
             for block in blocks {
-                key = AES128.ecbEncrypt(key, key: block)
+                key = AES.encrypt(key, key: block)
             }
         }
         return key
     }
 
-    static func legacyUserHash(email: String, key: Data) -> String {
-        let bytes = Data(email.utf8)
-        var hash = Data(count: 16)
+    static func legacyUserHash(email: String, key: AESBlock) -> String {
+        var hash = AESBlock()
+        for (index, byte) in email.utf8.enumerated() { hash[index % 16] ^= byte }
 
-        for offset in stride(from: 0, to: bytes.count, by: 4) {
-            var word = Data(bytes[offset..<min(offset + 4, bytes.count)])
-            word.append(Data(count: 4 - word.count))
-            let slot = (offset / 4) % 4
-            for index in 0..<4 {
-                hash[slot * 4 + index] ^= word[index]
-            }
-        }
-
-        for _ in 0..<legacyHashRounds {
-            hash = AES128.ecbEncrypt(hash, key: key)
-        }
-        return Base64URL.encode(Data(hash.prefix(4)) + Data(hash[8..<12]))
+        let ecb = Cryptor(kCCEncrypt, mode: kCCModeECB, key: key)
+        for _ in 0..<legacyHashRounds { hash = ecb(hash) }
+        return withUnsafeBytes(of: SIMD8(lowHalf: hash.lowHalf.lowHalf, highHalf: hash.highHalf.lowHalf), Base64URL.encode)
     }
 }

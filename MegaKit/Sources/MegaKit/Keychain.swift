@@ -1,59 +1,39 @@
 import Foundation
 import Security
 
-public enum Keychain {
-    public static let service = "com.omegadl.session"
+/// The signed-in account's session, kept as the service's only Keychain item.
+public struct Keychain: Sendable {
+    public static let standard = Keychain(service: "com.omegadl.session")
 
-    public static func save(_ session: AccountSession) throws {
-        let data = try JSONEncoder().encode(session)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: session.email,
-        ]
+    let service: String
 
+    private var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
+    }
+
+    public func save(_ session: AccountSession) throws {
         let update: [String: Any] = [
-            kSecValueData as String: data,
+            kSecValueData as String: try JSONEncoder().encode(session),
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
         ]
 
-        let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+        var status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if status == errSecItemNotFound {
-            let insert = query.merging(update) { _, new in new }
-            guard SecItemAdd(insert as CFDictionary, nil) == errSecSuccess else {
-                throw MegaError.keychainUnavailable
-            }
-        } else if status != errSecSuccess {
-            throw MegaError.keychainUnavailable
+            status = SecItemAdd(query.merging(update) { $1 } as CFDictionary, nil)
         }
-    }
-
-    public static func session(email: String) -> AccountSession? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: email,
-            kSecReturnData as String: true,
-        ]
-
-        var result: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data
-        else { return nil }
-
-        return try? JSONDecoder().decode(AccountSession.self, from: data)
+        guard status == errSecSuccess else { throw MegaError.keychainUnavailable }
     }
 
     @concurrent
-    public static func storedSession(email: String) async -> AccountSession? {
-        session(email: email)
+    public func session() async -> AccountSession? {
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query.merging([kSecReturnData as String: true]) { $1 } as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data
+        else { return nil }
+        return try? JSONDecoder().decode(AccountSession.self, from: data)
     }
 
-    public static func remove(email: String) {
-        SecItemDelete([
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: email,
-        ] as CFDictionary)
+    public func remove() {
+        SecItemDelete(query as CFDictionary)
     }
 }

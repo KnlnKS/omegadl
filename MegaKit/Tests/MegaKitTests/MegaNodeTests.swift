@@ -2,148 +2,188 @@ import Foundation
 import Testing
 @testable import MegaKit
 
-private func decodedFixtureNodes() throws -> [MegaNode] {
-    let decryptor = NodeDecryptor.folderLink(key: try #require(Base64URL.decode(Live.folderKey)))
-    return try folderListingNodes().compactMap(decryptor.decrypt)
-}
+private let rootHandle = NodeHandle(Live.rootHandle)!
 
-@Suite struct NodeDecryptionTests {
+@Suite struct ListingTests {
     @Test func `decrypts every node in a real folder listing`() throws {
-        let nodes = try decodedFixtureNodes()
-        #expect(nodes.count == Live.nodeCount)
-        #expect(nodes.allSatisfy { $0.key != nil })
-        #expect(nodes.allSatisfy { $0.name != $0.handle })
+        let tree = try folderListingTree()
+        #expect(tree.count == Live.nodeCount)
+        #expect((0..<tree.count).allSatisfy { tree[$0].attributeKey != nil && tree[$0].name != tree[$0].id.description })
     }
 
     @Test func `recovers the folder name and key`() throws {
-        let root = try #require(try decodedFixtureNodes().first { $0.handle == Live.rootHandle })
+        let root = try #require(try folderListingTree().node(rootHandle))
         #expect(root.kind == .folder)
         #expect(root.name == Live.folderName)
-        #expect(root.folderKey?.count == 16)
+        #expect(root.attributeKey != nil)
         #expect(root.fileKey == nil)
     }
 
     @Test func `recovers file names, sizes and keys`() throws {
-        let nodes = try decodedFixtureNodes()
-
-        let small = try #require(nodes.first { $0.handle == Live.smallFileHandle })
+        let tree = try folderListingTree()
+        let small = try #require(tree.node(NodeHandle(Live.smallFileHandle)!))
         #expect(small.kind == .file)
         #expect(small.name == Live.smallFileName)
         #expect(small.size == Live.smallFileSize)
-        #expect(small.fileKey?.nonce.map { String(format: "%02x", $0) }.joined() == "8ae83362ce78b1e0")
-        #expect(small.fileKey?.metaMAC.map { String(format: "%02x", $0) }.joined() == "9092af0f70214ec5")
+        #expect(small.fileKey?.nonce == half("8ae83362ce78b1e0"))
+        #expect(small.fileKey?.metaMAC == half("9092af0f70214ec5"))
 
-        let large = try #require(nodes.first { $0.handle == Live.largeFileHandle })
+        let large = try #require(tree.node(NodeHandle(Live.largeFileHandle)!))
         #expect(large.name == Live.largeFileName)
         #expect(large.size == Live.largeFileSize)
         #expect(large.modified.timeIntervalSince1970 > 0)
     }
 
-    @Test func `yields no name when the key does not match`() throws {
-        let wrong = NodeDecryptor.folderLink(key: Data(count: 16))
-        let nodes = try folderListingNodes().compactMap(wrong.decrypt)
-        #expect(nodes.allSatisfy { $0.name == $0.handle })
+    @Test func `falls back to the handle when the key does not match`() throws {
+        let tree = try folderListingTree(key: .zero)
+        #expect((0..<tree.count).allSatisfy { tree[$0].name == tree[$0].id.description })
     }
 
     @Test func `reads a share root whose key is not the first segment`() throws {
-        let key = try #require(Base64URL.decode(Live.folderKey))
-        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle })
-        let decoy = "2X_iT56HQGc:" + Base64URL.encode(
-            AES128.ecbEncrypt(Data(repeating: 7, count: 16), key: Data(repeating: 3, count: 16))
-        )
-        let shared = RawNode(
-            h: root.h, p: root.p, u: root.u, t: root.t, a: root.a,
-            k: decoy + "/" + (try #require(root.k)), s: root.s, ts: root.ts
-        )
-
-        let node = try #require(NodeDecryptor.folderLink(key: key).decrypt(shared))
-        #expect(node.name == Live.folderName)
-        #expect(node.folderKey == NodeDecryptor.folderLink(key: key).decrypt(root)?.folderKey)
+        let decoy = "2X_iT56HQGc:" + Base64URL.encode(AES.encrypt(AESBlock(repeating: 7), key: AESBlock(repeating: 3)))
+        let json = folderListingJSON.replacingOccurrences(of: #""k":"LIkEAD7L:q3Ls"#, with: #""k":"\#(decoy)/LIkEAD7L:q3Ls"#)
+        #expect(try folderListingTree(json: json).node(rootHandle)?.name == Live.folderName)
     }
 
-    @Test func `ignores key segments addressed to other holders`() throws {
-        let key = try #require(Base64URL.decode(Live.folderKey))
-        let decryptor = NodeDecryptor.account(userHandle: "somebodyelse", masterKey: Data(count: 16), shareKeys: [
-            Live.rootHandle: key
-        ])
-        let root = try #require(try folderListingNodes().first { $0.h == Live.rootHandle }.map(decryptor.decrypt))
-        #expect(root?.name == Live.folderName)
+    @Test func `unwraps nodes through a share key from the account's key list`() throws {
+        let masterKey = block("000102030405060708090a0b0c0d0e0f")
+        let folderKey = try #require(Base64URL.decodeBlock(Live.folderKey))
+        let share = #"{"h":"\#(Live.rootHandle)","k":"\#(Base64URL.encode(AES.encrypt(folderKey, key: masterKey)))"}"#
+        let json = folderListingJSON.dropLast(2) + #"],"ok":[\#(share)]}"#
+        let account = AccountSession(sessionID: "", masterKey: masterKey, userHandle: "somebodyelse", email: "")
+
+        let tree = try MegaTree(listing: Data("[\(json)]".utf8), keyring: Keyring(account: account))
+        #expect(tree.node(rootHandle)?.name == Live.folderName)
+        #expect(tree.node(NodeHandle(Live.largeFileHandle)!)?.name == Live.largeFileName)
+    }
+
+    @Test func `rejects a body that is not a listing`() {
+        #expect(throws: MegaError.malformedResponse) { try MegaTree(listing: Data("[]".utf8), keyring: Keyring(folderKey: .zero)) }
+        #expect(throws: MegaError.malformedResponse) { try MegaTree(listing: Data(#"[{"f":[{"h":"#.utf8), keyring: Keyring(folderKey: .zero)) }
     }
 }
 
 @Suite struct MegaTreeTests {
-    @Test func `roots the tree at the shared folder`() throws {
-        let tree = MegaTree(nodes: try decodedFixtureNodes())
-        #expect(tree.roots.count == 1)
-        #expect(tree.roots.first?.handle == Live.rootHandle)
-        #expect(tree.children(of: Live.rootHandle).count == Live.nodeCount - 1)
-        #expect(tree.children(of: Live.smallFileHandle).isEmpty)
-    }
+    private func handle(_ index: Int) -> NodeHandle { NodeHandle(raw: UInt64(index + 1) * 0x0101_0101) }
 
-    @Test func `sorts directories first then by localized name`() throws {
-        let nodes = [
-            MegaNode(handle: "c", parentHandle: "r", owner: nil, kind: .file, size: 0,
-                     modified: .distantPast, name: "beta.mp3", restoreHandle: nil, key: nil),
-            MegaNode(handle: "b", parentHandle: "r", owner: nil, kind: .file, size: 0,
-                     modified: .distantPast, name: "Alpha.mp3", restoreHandle: nil, key: nil),
-            MegaNode(handle: "d", parentHandle: "r", owner: nil, kind: .folder, size: 0,
-                     modified: .distantPast, name: "zeta", restoreHandle: nil, key: nil),
-            MegaNode(handle: "r", parentHandle: nil, owner: nil, kind: .folder, size: 0,
-                     modified: .distantPast, name: "root", restoreHandle: nil, key: nil),
+    /// root ─ b/ ─ b1.txt, a/ ─ (a2.txt, a1/ ─ deep.txt), z.txt, plus a rubbish bin and an orphaned
+    /// file and folder; appended shuffled.
+    private func sampleTree() -> MegaTree {
+        let rows: [(Int, Int?, MegaNode.Kind, String, Int)] = [
+            (7, 3, .file, "deep.txt", 70), (2, 0, .folder, "b", 0), (0, nil, .root, "Cloud Drive", 0),
+            (4, 1, .file, "a2.txt", 40), (5, 2, .file, "b1.txt", 50), (1, 0, .folder, "a", 0),
+            (6, 0, .file, "z.txt", 60), (3, 1, .folder, "a1", 0), (8, nil, .rubbish, "Rubbish", 0),
+            (9, 99, .file, "orphan.txt", 0), (10, 98, .folder, "Shared", 0),
         ]
-        #expect(MegaTree(nodes: nodes).children(of: "r").map(\.name) == ["zeta", "Alpha.mp3", "beta.mp3"])
+        var builder = MegaTree.Builder()
+        for (index, parent, kind, name, size) in rows {
+            builder.append(handle: handle(index), parent: parent.map(handle), kind: kind, size: size, time: 0,
+                           name: name)
+        }
+        return builder.build()
     }
 
-    @Test func `builds a breadcrumb path from the root down`() throws {
-        let tree = MegaTree(nodes: try decodedFixtureNodes())
-        let path = tree.path(to: Live.largeFileHandle)
-        #expect(path.map(\.handle) == [Live.rootHandle, Live.largeFileHandle])
+    @Test func `orders system roots, then folders, then files, by localized name, depth first`() {
+        let tree = sampleTree()
+        #expect((0..<tree.count).map { tree[$0].name } == [
+            "Cloud Drive", "a", "a1", "deep.txt", "a2.txt", "b", "b1.txt", "z.txt", "Rubbish", "Shared", "orphan.txt",
+        ])
+        #expect(tree.roots.map(\.kind) == [.root, .rubbish, .folder, .file])
+        #expect(tree.roots[0].children.map(\.name) == ["a", "b", "z.txt"])
     }
 
-    @Test func `roots a lone file at itself with no children`() {
-        let file = MegaNode(
-            handle: "MQ10FZrA", parentHandle: nil, owner: nil, kind: .file, size: 6_370_825_656,
-            modified: .distantPast, name: "episode.mkv", restoreHandle: nil, key: nil
-        )
-        let tree = MegaTree(nodes: [file])
+    @Test func `lays out every subtree contiguously`() {
+        let tree = sampleTree()
+        for index in 0..<tree.count {
+            let node = tree[index]
+            #expect(node.children.allSatisfy { node.subtree.contains($0.index) && $0.subtree.upperBound <= node.subtree.upperBound })
+            #expect(node.subtree.allSatisfy { tree[$0].root.index == node.root.index })
+        }
+        let a = tree.roots[0].children[0]
+        #expect(a.totalSize == 110)
+        #expect(tree.node(handle(7))?.parent?.parent?.id == handle(1))
+    }
 
-        #expect(tree.roots.map(\.handle) == ["MQ10FZrA"])
-        #expect(!tree.roots[0].isDirectory)
-        #expect(tree.children(of: "MQ10FZrA").isEmpty)
-        #expect(tree.path(to: "MQ10FZrA").map(\.handle) == ["MQ10FZrA"])
+    @Test func `mirrors a subtree's files under a directory`() {
+        var placed = [String]()
+        sampleTree().roots[0].forEachFile(under: URL(filePath: "/d")) { file, folder in
+            placed.append(folder.appending(path: file.name).path)
+        }
+        #expect(placed == ["/d/Cloud Drive/a/a1/deep.txt", "/d/Cloud Drive/a/a2.txt", "/d/Cloud Drive/b/b1.txt", "/d/Cloud Drive/z.txt"])
+    }
+
+    @Test func `finds every node by handle`() {
+        let tree = sampleTree()
+        for index in 0..<9 { #expect(tree.node(handle(index))?.id == handle(index)) }
+        #expect(tree.node(handle(99)) == nil)
+    }
+
+    @Test func `keeps the last row for a repeated handle and drops cycles`() {
+        var builder = MegaTree.Builder()
+        builder.append(handle: handle(0), parent: nil, kind: .folder, size: 0, time: 0, name: "old")
+        builder.append(handle: handle(0), parent: nil, kind: .folder, size: 0, time: 0, name: "new")
+        builder.append(handle: handle(1), parent: handle(2), kind: .folder, size: 0, time: 0, name: "loop")
+        builder.append(handle: handle(2), parent: handle(1), kind: .folder, size: 0, time: 0, name: "loop")
+        let tree = builder.build()
+        #expect(tree.count == 1)
+        #expect(tree.roots.map(\.name) == ["new"])
+    }
+
+    @Test func `puts back only into an existing folder outside the rubbish`() {
+        var builder = MegaTree.Builder()
+        let rows: [(Int, Int?, MegaNode.Kind, Int?)] = [
+            (0, nil, .root, nil), (1, 0, .folder, nil), (2, 0, .file, nil), (3, nil, .rubbish, nil), (4, 3, .folder, nil),
+            (5, 3, .file, 1), (6, 3, .file, 2), (7, 3, .file, 4), (8, 3, .file, 99), (9, 3, .file, nil),
+        ]
+        for (index, parent, kind, restore) in rows {
+            builder.append(handle: handle(index), parent: parent.map(handle), kind: kind, size: 0, time: 0,
+                           name: "\(index)", restore: restore.map(handle))
+        }
+        let tree = builder.build()
+        #expect(tree.node(handle(5))?.restoreTarget?.id == handle(1))
+        #expect((6...9).allSatisfy { tree.node(handle($0))?.restoreTarget == nil })
+    }
+
+    @Test func `roots a lone file at itself`() {
+        var builder = MegaTree.Builder()
+        builder.append(handle: handle(0), parent: nil, kind: .file, size: 6_370_825_656, time: 0,
+                       name: "episode.mkv")
+        let file = builder.build().roots[0]
+        #expect(!file.isDirectory)
+        #expect(file.children.isEmpty)
+        #expect(file.size == 6_370_825_656)
     }
 }
 
-@Suite struct ShareKeyTests {
-    private let masterKey = Data((0..<16).map(UInt8.init))
-    private let shareKey = Data((0..<16).map { UInt8(255 - $0) })
+@Suite struct KeyringTests {
+    private let masterKey = block("000102030405060708090a0b0c0d0e0f")
+    private let shareKey = block("fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0")
+    private let share = NodeHandle("AbCdEfGh")!
 
-    private func entry(handle: String, authorized: Bool) -> ShareKeyEntry {
-        let wrapped = AES128.ecbEncrypt(shareKey, key: masterKey)
-        let authority = AES128.ecbEncrypt(Data(handle.utf8) + Data(handle.utf8), key: masterKey)
-        return ShareKeyEntry(
-            h: handle,
-            k: Base64URL.encode(wrapped),
-            ha: Base64URL.encode(authorized ? authority : Data(count: 16))
-        )
+    private func keyring(authority: AESBlock?) -> Keyring {
+        var keyring = Keyring(account: AccountSession(sessionID: "", masterKey: masterKey, userHandle: "AAAAAAAAAAA", email: ""))
+        keyring.addShare(handle: share, wrapped: AES.encrypt(shareKey, key: masterKey), authority: authority)
+        return keyring
     }
 
-    @Test func `unwraps a share key whose authority checks out`() {
-        let keys = MegaSession.shareKeys(from: [entry(handle: "AbCdEfGh", authorized: true)], masterKey: masterKey)
-        #expect(keys["AbCdEfGh"] == shareKey)
+    private func key(_ keyring: borrowing Keyring, for holder: String) -> AESBlock? {
+        var holder = holder
+        return holder.withUTF8 { keyring.wrappingKey(for: UnsafeRawBufferPointer($0)) }
+    }
+
+    @Test func `unwraps a share key whose authority checks out, or that carries none`() {
+        let authority = AES.encrypt(AESBlock(Array("AbCdEfGhAbCdEfGh".utf8)), key: masterKey)
+        #expect(key(keyring(authority: authority), for: "AbCdEfGh") == shareKey)
+        #expect(key(keyring(authority: nil), for: "AbCdEfGh") == shareKey)
     }
 
     @Test func `discards a share key whose authority was tampered with`() {
-        let keys = MegaSession.shareKeys(from: [entry(handle: "AbCdEfGh", authorized: false)], masterKey: masterKey)
-        #expect(keys.isEmpty)
+        #expect(key(keyring(authority: .zero), for: "AbCdEfGh") == nil)
     }
 
-    @Test func `accepts an entry that carries no authority value`() {
-        let wrapped = AES128.ecbEncrypt(shareKey, key: masterKey)
-        let keys = MegaSession.shareKeys(
-            from: [ShareKeyEntry(h: "AbCdEfGh", k: Base64URL.encode(wrapped), ha: nil)],
-            masterKey: masterKey
-        )
-        #expect(keys["AbCdEfGh"] == shareKey)
+    @Test func `resolves the owner's own handle to the master key and nobody else's`() {
+        let keyring = keyring(authority: nil)
+        #expect(key(keyring, for: "AAAAAAAAAAA") == masterKey)
+        #expect(key(keyring, for: "BBBBBBBBBBB") == nil)
     }
 }

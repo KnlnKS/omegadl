@@ -35,6 +35,6 @@ yN95ius7jncJLAoNYxKVNepsVlpM0wkzrHnZCyJxzog4c-3ICGxECtARLYOo2gluIz4RK0DnnJGfosk3
 ","k":"LIkEAD7L:j0lqVILtEHE9wuFQnXEqnQpo4-kPRQ6Cq1cRENDepKY","s":9870221,"ts":1787242953}]}
 """
 
-func folderListingNodes() throws -> [RawNode] {
-    try JSONDecoder().decode(FilesResponse.self, from: Data(folderListingJSON.utf8)).f
+func folderListingTree(key: AESBlock? = Base64URL.decodeBlock(Live.folderKey), json: String = folderListingJSON) throws -> MegaTree {
+    try MegaTree(listing: Data("[\(json)]".utf8), keyring: Keyring(folderKey: key ?? .zero))
 }

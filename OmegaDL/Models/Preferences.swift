@@ -6,6 +6,7 @@ enum Preferences {
     static let connectionsPerTransferKey = "ConnectionsPerTransfer"
 
     static let simultaneousTransfersDefault = 2
+    static let simultaneousTransfersLimit = 6
     static let connectionsPerTransferDefault = 8
 
     static var downloadDirectory: URL {

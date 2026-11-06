@@ -2,56 +2,63 @@ import Foundation
 import Testing
 @testable import MegaKit
 
+private extension MegaLink {
+    var folderKey: AESBlock? {
+        if case .folder(let key) = kind { key } else { nil }
+    }
+
+    var fileKey: MegaFileKey? {
+        if case .file(let key) = kind { key } else { nil }
+    }
+}
+
+private let folderHandle = NodeHandle(Live.folderID)!
+private let fileKey = Base64URL.encode(Data((0..<32).map(UInt8.init)))
+
 @Suite struct MegaLinkTests {
     @Test func `parses the current folder format`() throws {
         let link = try #require(MegaLink(Live.folderURL))
-        #expect(link.kind == .folder)
-        #expect(link.handle == Live.folderID)
-        #expect(link.key.count == 16)
-        #expect(Base64URL.encode(link.key) == Live.folderKey)
+        #expect(link.handle == folderHandle)
+        #expect(link.folderKey.map(Base64URL.encode) == Live.folderKey)
         #expect(link.selectedHandle == nil)
     }
 
     @Test func `parses a file selected inside a folder`() throws {
         let link = try #require(MegaLink("\(Live.folderURL)/file/\(Live.smallFileHandle)"))
-        #expect(link.kind == .folder)
-        #expect(link.handle == Live.folderID)
-        #expect(link.selectedHandle == Live.smallFileHandle)
+        #expect(link.folderKey != nil)
+        #expect(link.handle == folderHandle)
+        #expect(link.selectedHandle == NodeHandle(Live.smallFileHandle))
     }
 
     @Test func `parses a subfolder path in the fragment`() throws {
         let link = try #require(MegaLink("\(Live.folderURL)/folder/AbCdEfGh"))
-        #expect(link.kind == .folder)
-        #expect(link.selectedHandle == "AbCdEfGh")
+        #expect(link.folderKey != nil)
+        #expect(link.selectedHandle == NodeHandle("AbCdEfGh"))
     }
 
     @Test func `parses the current file format`() throws {
-        let key = Base64URL.encode(Data((0..<32).map(UInt8.init)))
-        let link = try #require(MegaLink("https://mega.nz/file/AbCdEfGh#\(key)"))
-        #expect(link.kind == .file)
-        #expect(link.handle == "AbCdEfGh")
-        #expect(link.key.count == 32)
+        let link = try #require(MegaLink("https://mega.nz/file/AbCdEfGh#\(fileKey)"))
+        #expect(link.handle == NodeHandle("AbCdEfGh"))
+        #expect(link.fileKey.map { withUnsafeBytes(of: $0.packed, Base64URL.encode) } == fileKey)
     }
 
     @Test func `parses the legacy folder format`() throws {
         let link = try #require(MegaLink("https://mega.nz/#F!\(Live.folderID)!\(Live.folderKey)"))
-        #expect(link.kind == .folder)
-        #expect(link.handle == Live.folderID)
-        #expect(Base64URL.encode(link.key) == Live.folderKey)
+        #expect(link.handle == folderHandle)
+        #expect(link.folderKey.map(Base64URL.encode) == Live.folderKey)
     }
 
     @Test func `parses the legacy folder format with a selected file`() throws {
         let link = try #require(
             MegaLink("https://mega.nz/#F!\(Live.folderID)!\(Live.folderKey)!\(Live.smallFileHandle)")
         )
-        #expect(link.selectedHandle == Live.smallFileHandle)
+        #expect(link.selectedHandle == NodeHandle(Live.smallFileHandle))
     }
 
     @Test func `parses the legacy file format`() throws {
-        let key = Base64URL.encode(Data((0..<32).map(UInt8.init)))
-        let link = try #require(MegaLink("https://mega.nz/#!AbCdEfGh!\(key)"))
-        #expect(link.kind == .file)
-        #expect(link.handle == "AbCdEfGh")
+        let link = try #require(MegaLink("https://mega.nz/#!AbCdEfGh!\(fileKey)"))
+        #expect(link.fileKey != nil)
+        #expect(link.handle == NodeHandle("AbCdEfGh"))
     }
 
     @Test func `accepts mega.co.nz, a missing scheme and surrounding whitespace`() throws {
@@ -61,12 +68,12 @@ import Testing
             "  \(Live.folderURL)\n",
         ] {
             let link = try #require(MegaLink(variant), "failed to parse \(variant)")
-            #expect(link.handle == Live.folderID)
+            #expect(link.handle == folderHandle)
         }
     }
 
     @Test func `round-trips through its canonical URL`() throws {
-        for variant in [Live.folderURL, "\(Live.folderURL)/file/\(Live.smallFileHandle)"] {
+        for variant in [Live.folderURL, "\(Live.folderURL)/file/\(Live.smallFileHandle)", "https://mega.nz/file/AbCdEfGh#\(fileKey)"] {
             let link = try #require(MegaLink(variant))
             #expect(MegaLink(link.url.absoluteString) == link)
         }
@@ -81,6 +88,7 @@ import Testing
         "https://mega.nz/folder/#jH6VX0GcTngXCf6kBnQGDA",
         "https://mega.nz/file/AbCdEfGh#jH6VX0GcTngXCf6kBnQGDA",
         "https://mega.nz/#F!7YdzBbYb",
+        "https://mega.nz/folder/7YdzBbYb#jH6VX0GcTngXCf6kBnQGDA/file/short",
         "not a link at all",
         "",
     ]) func `rejects malformed links`(input: String) {
@@ -90,13 +98,13 @@ import Testing
 
 @Suite struct MultipleLinkParsingTests {
     private let folder = Live.folderURL
-    private let file = "https://mega.nz/file/AbCdEfGh#\(Base64URL.encode(Data((0..<32).map(UInt8.init))))"
+    private let file = "https://mega.nz/file/AbCdEfGh#\(fileKey)"
 
     @Test func `finds one link per line`() {
         let links = MegaLink.links(in: "\(folder)\n\(file)\n")
         #expect(links.count == 2)
-        #expect(links[0].handle == Live.folderID)
-        #expect(links[1].handle == "AbCdEfGh")
+        #expect(links[0].handle == folderHandle)
+        #expect(links[1].handle == NodeHandle("AbCdEfGh"))
     }
 
     @Test(arguments: [" ", "\n", "\r\n", ", ", "; ", " | ", "\n\n  \n"])
@@ -108,21 +116,21 @@ import Testing
         let text = "Here you go: \(folder), and also <\(file)>. Enjoy!"
         let links = MegaLink.links(in: text)
         #expect(links.count == 2)
-        #expect(links[0].handle == Live.folderID)
+        #expect(links[0].handle == folderHandle)
     }
 
     @Test func `drops duplicates while keeping the first order`() {
         let links = MegaLink.links(in: "\(file)\n\(folder)\n\(file)\n\(folder)")
         #expect(links.count == 2)
-        #expect(links[0].handle == "AbCdEfGh")
-        #expect(links[1].handle == Live.folderID)
+        #expect(links[0].handle == NodeHandle("AbCdEfGh"))
+        #expect(links[1].handle == folderHandle)
     }
 
     @Test func `skips tokens that are not MEGA links`() {
         let text = "https://example.com/a\n\(folder)\nnot-a-link\nhttps://mega.nz/folder/broken"
         let links = MegaLink.links(in: text)
         #expect(links.count == 1)
-        #expect(links[0].handle == Live.folderID)
+        #expect(links[0].handle == folderHandle)
     }
 
     @Test func `returns nothing for text with no links`() {

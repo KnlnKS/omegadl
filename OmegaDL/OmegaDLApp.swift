@@ -2,6 +2,17 @@ import AppKit
 import SwiftUI
 
 @main
+enum Launcher {
+    /// A unit test host runs a bare application, so tests never touch the Keychain or saved transfers.
+    static func main() {
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            OmegaDLApp.main()
+        } else {
+            NSApplication.shared.run()
+        }
+    }
+}
+
 struct OmegaDLApp: App {
     @NSApplicationDelegateAdaptor(MenuBarTrimmer.self) private var menuBar
     @State private var model = AppModel()
@@ -15,15 +26,16 @@ struct OmegaDLApp: App {
         .commands {
             SidebarCommands()
             CommandGroup(after: .sidebar) {
-                Button("Transfers") { model.select(.transfers) }
+                Button("Transfers") { model.selection = .transfers }
                     .keyboardShortcut("t", modifiers: [.command, .option])
             }
             CommandGroup(after: .appInfo) {
                 Divider()
-                if model.isSignedIn {
+                if model.account != nil {
                     Button("Sign Out", systemImage: "person.crop.circle.badge.xmark") { model.signOut() }
                 } else {
-                    Button("Sign In", systemImage: "person.crop.circle.badge.plus") { model.isSigningIn = true }
+                    Button("Sign In", systemImage: "person.crop.circle.badge.plus") { model.present(.signIn) }
+                        .disabled(model.sheet != nil)
                 }
             }
         }

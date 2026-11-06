@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import MegaKit
 
 enum Live {
     static let enabled = ProcessInfo.processInfo.environment["MEGA_LIVE_TESTS"] != nil
@@ -31,6 +32,14 @@ func hex(_ string: String) -> Data {
         index = next
     }
     return Data(bytes)
+}
+
+func block(_ string: String) -> AESBlock {
+    hex(string).withUnsafeBytes { AESBlock($0)! }
+}
+
+func half(_ string: String) -> SIMD8<UInt8> {
+    hex(string).withUnsafeBytes { $0.loadUnaligned(as: SIMD8<UInt8>.self) }
 }
 
 func makeScratch() throws -> URL {

@@ -2,200 +2,105 @@ import Foundation
 import MegaKit
 import Observation
 
-struct SidebarItem: Identifiable, Hashable {
-    enum ID: Hashable {
-        case folder(String)
-        case transfers
-    }
-
-    let id: ID
-    let name: String
-    let symbol: String
-
-    static let transfers = SidebarItem(id: .transfers, name: "Transfers", symbol: "arrow.up.arrow.down")
+enum SidebarSelection: Hashable {
+    case folder(NodeHandle)
+    case transfers
 }
 
 @Observable
 final class AppModel {
+    enum Sheet: Hashable, Identifiable {
+        case addLink
+        case signIn
+        case pick(FolderPick)
+
+        var id: Self { self }
+    }
+
     let transfers = TransferManager()
 
     private(set) var account: Source?
-    private(set) var picks: [FolderPick] = []
+    var selection: SidebarSelection?
+    private(set) var sheet: Sheet?
+    /// Folder picks from added links, shown one at a time as sheets close.
+    @ObservationIgnored private var queuedPicks: [FolderPick] = []
 
-    var selectedItemID: SidebarItem.ID?
-    var currentFolder: String?
-    var isAddingLink = false
-    var isSigningIn = false
-
-    private static let accountKey = "SignedInEmail"
-
-    var currentPick: FolderPick? {
-        get { picks.first }
-        set { if newValue == nil, !picks.isEmpty { picks.removeFirst() } }
+    func present(_ sheet: Sheet) {
+        self.sheet = sheet
     }
 
-    var isSignedIn: Bool { account != nil }
-
-    var accountItems: [SidebarItem] {
-        guard let tree = account?.tree else { return [] }
-        return tree.roots.sorted { $0.kind.rawValue < $1.kind.rawValue }.map { root in
-            SidebarItem(id: .folder(root.handle), name: root.name, symbol: symbol(for: root.kind))
-        }
+    func dismissSheet() {
+        sheet = queuedPicks.isEmpty ? nil : .pick(queuedPicks.removeFirst())
     }
 
-    private func symbol(for kind: MegaNode.Kind) -> String {
-        switch kind {
-        case .root: "cloud"
-        case .inbox: "tray"
-        case .rubbish: "trash"
-        case .folder: "folder"
-        case .file: "doc"
-        }
-    }
-
-    var rootHandle: String? {
-        guard case .folder(let handle) = selectedItemID,
-              accountItems.contains(where: { $0.id == selectedItemID })
-        else { return nil }
-        return handle
-    }
-
-    var isShowingTransfers: Bool {
-        selectedItemID == .transfers
-    }
-
-    var selectedSource: Source? {
-        rootHandle == nil ? nil : account
-    }
-
-    var folder: String? {
-        currentFolder ?? rootHandle
-    }
-
-    var canGoUp: Bool {
-        guard let folder, let rootHandle else { return false }
-        return folder != rootHandle
-    }
-
+    /// Restores the saved account, resumes transfers, loads the tree and opens its first folder.
     func load() async {
-        if account == nil,
-           let email = UserDefaults.standard.string(forKey: Self.accountKey),
-           let stored = await Keychain.storedSession(email: email) {
-            let source = Source(account: stored)
-            account = source
-            transfers.register(source)
+        if account == nil, let session = await Keychain.standard.session() {
+            open(session)
         }
+        transfers.pump()
         await account?.load()
-        if selectedItemID == nil {
-            selectedItemID = accountItems.first?.id
+        if selection == nil {
+            selection = account?.tree?.roots.first.map { .folder($0.id) }
         }
     }
 
-    func addLinks(_ text: String) async -> String? {
-        let sources = MegaLink.links(in: text).compactMap { try? Source(link: $0) }
-        guard !sources.isEmpty else { return "No MEGA links found in that text." }
-
+    /// Opens each link, queuing a pick for folders and downloading files. Returns the links that failed.
+    func addLinks(_ links: [MegaLink]) async -> [(link: MegaLink, message: String)] {
+        let sources = links.map(Source.init(link:))
         await withTaskGroup { group in
             for source in sources {
                 group.addTask { await source.load() }
             }
         }
 
-        var failures = [String]()
-        for source in sources {
+        var failures = [(link: MegaLink, message: String)]()
+        for (link, source) in zip(links, sources) {
             guard let tree = source.tree,
-                  let target = source.link?.selectedHandle.flatMap(tree.node) ?? tree.roots.first
+                  let target = link.selectedHandle.flatMap(tree.node) ?? tree.roots.first
             else {
-                if case .failed(let message) = source.status {
-                    failures.append(message)
-                } else {
-                    failures.append("That link opened nothing.")
-                }
+                failures.append((link, source.failure ?? "That link opened nothing."))
                 continue
             }
             if target.isDirectory {
-                picks.append(FolderPick(source: source, root: target, tree: tree))
+                queuedPicks.append(FolderPick(source: source, root: target))
             } else {
                 download([target], from: source)
+                selection = .transfers
             }
         }
 
-        guard let first = failures.first else { return nil }
-        return failures.count == 1 ? first : "\(failures.count) of \(sources.count) links failed."
-    }
-
-    func select(_ itemID: SidebarItem.ID?) {
-        selectedItemID = itemID
-        currentFolder = nil
+        return failures
     }
 
     func signIn(with session: AccountSession) throws {
-        try Keychain.save(session)
-        UserDefaults.standard.set(session.email, forKey: Self.accountKey)
-        let source = Source(account: session)
-        account = source
-        transfers.register(source)
-        Task {
-            await source.load()
-            select(accountItems.first?.id)
-        }
+        try Keychain.standard.save(session)
+        open(session)
+        Task { await load() }
     }
 
     func signOut() {
-        if case .account(let session)? = account?.kind {
-            Keychain.remove(email: session.email)
-        }
-        UserDefaults.standard.removeObject(forKey: Self.accountKey)
-        account = nil
-        select(nil)
+        guard let account else { return }
+        transfers.drop(account)
+        Keychain.standard.remove()
+        self.account = nil
+        if selection != .transfers { selection = nil }
     }
 
-    func download(_ nodes: [MegaNode], from source: Source, including: Set<MegaNode.ID>? = nil) {
+    private func open(_ session: AccountSession) {
+        let source = Source(account: session)
+        account = source
+        transfers.register(source)
+    }
+
+    func download(_ nodes: [MegaNode], from source: Source) {
         guard !nodes.isEmpty else { return }
-        transfers.download(nodes, from: source, into: Preferences.downloadDirectory, including: including)
+        transfers.download(nodes, from: source, into: Preferences.downloadDirectory)
     }
 
-    func uploadTarget(in source: Source) -> String? {
-        guard source.allowsUpload, let folder,
-              let node = source.tree?.node(folder),
-              node.kind == .root || node.kind == .folder
-        else { return nil }
-        return folder
-    }
-
-    func isInRubbish(_ source: Source) -> Bool {
-        guard let folder, let tree = source.tree else { return false }
-        return tree.path(to: folder).first?.kind == .rubbish
-    }
-
-    func rubbishHandle(in source: Source) -> String? {
-        source.tree?.roots.first { $0.kind == .rubbish }?.handle
-    }
-
-    func restoreDestination(for node: MegaNode, in source: Source) -> MegaNode? {
-        guard let handle = node.restoreHandle, let target = source.tree?.node(handle),
-              target.isDirectory, source.tree?.path(to: handle).first?.kind != .rubbish
-        else { return nil }
-        return target
-    }
-
-    func title(for source: Source) -> String {
-        guard let folder, let node = source.tree?.node(folder) else { return source.name }
-        return node.name
-    }
-
-    func contents(of source: Source) -> [MegaNode] {
-        guard let tree = source.tree, let folder, tree.node(folder) != nil else { return [] }
-        return tree.children(of: folder)
-    }
-
-    func open(_ node: MegaNode) {
-        guard node.isDirectory else { return }
-        currentFolder = node.handle
-    }
-
-    func goUp(in source: Source) {
-        guard canGoUp, let folder else { return }
-        currentFolder = source.tree?.node(folder)?.parentHandle
+    func download(_ pick: FolderPick) {
+        let chosen = pick.selection
+        transfers.download([chosen.root], from: pick.source, into: Preferences.downloadDirectory, including: chosen.contains)
+        selection = .transfers
     }
 }

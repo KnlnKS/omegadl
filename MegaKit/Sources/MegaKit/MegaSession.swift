@@ -1,75 +1,51 @@
+import CommonCrypto
 import Foundation
-
-public struct DownloadDescriptor: Sendable {
-    public let url: URL
-    public let size: Int
-    public let key: MegaFileKey
-    public let name: String
-}
 
 public actor MegaSession {
     private enum Context: Sendable {
-        case publicFolder(handle: String)
-        case publicFile(handle: String, key: MegaFileKey)
+        case publicFolder(key: AESBlock)
+        case publicFile(handle: NodeHandle, key: MegaFileKey)
         case account(AccountSession)
     }
 
     private let api: APIClient
-    private var decryptor: NodeDecryptor
     private let context: Context
 
-    public init(account: AccountSession, api: APIClient = APIClient()) {
-        self.api = api
-        self.context = .account(account)
-        self.decryptor = NodeDecryptor()
+    public init(account: AccountSession) {
+        api = APIClient(.account(sessionID: account.sessionID))
+        context = .account(account)
     }
 
-    public init(link: MegaLink, api: APIClient = APIClient()) throws {
-        self.api = api
+    public init(link: MegaLink) {
         switch link.kind {
-        case .folder:
-            self.context = .publicFolder(handle: link.handle)
-            self.decryptor = .folderLink(key: link.key)
-        case .file:
-            guard let key = MegaFileKey(packed: link.key) else { throw MegaError.invalidLink }
-            self.context = .publicFile(handle: link.handle, key: key)
-            self.decryptor = NodeDecryptor()
+        case .folder(let key):
+            api = APIClient(.folder(link.handle))
+            context = .publicFolder(key: key)
+        case .file(let key):
+            api = APIClient()
+            context = .publicFile(handle: link.handle, key: key)
         }
     }
 
     public func loadTree() async throws -> MegaTree {
         switch context {
-        case .publicFolder(let handle):
-            await api.setFolderID(handle)
-            let response: FilesResponse = try await api.request(FilesCommand(scopedToFolderLink: true))
-            return MegaTree(nodes: response.f.compactMap(decryptor.decrypt))
+        case .publicFolder(let key):
+            return try await MegaTree(listing: api.body(for: [FilesCommand.folderLink]), keyring: Keyring(folderKey: key))
 
         case .account(let account):
-            await api.setSessionID(account.sessionID)
-            let response: FilesResponse = try await api.request(FilesCommand(scopedToFolderLink: false))
-            decryptor = .account(
-                userHandle: account.userHandle,
-                masterKey: account.masterKey,
-                shareKeys: Self.shareKeys(from: response.ok, masterKey: account.masterKey)
-            )
-            return MegaTree(nodes: response.f.compactMap(decryptor.decrypt))
+            return try await MegaTree(listing: api.body(for: [FilesCommand.account]), keyring: Keyring(account: account))
 
         case .publicFile(let handle, let key):
             let response: DownloadResponse = try await api.request(
-                DownloadCommand(publicHandle: handle, wantsURL: false)
+                DownloadCommand(publicHandle: handle.description, wantsURL: false)
             )
-            let node = MegaNode(
-                handle: handle,
-                parentHandle: nil,
-                owner: nil,
-                kind: .file,
-                size: response.s,
-                modified: .now,
-                name: NodeDecryptor.name(from: response.at, key: key.aesKey) ?? handle,
-                restoreHandle: nil,
-                key: .file(key)
+            let name = response.at.flatMap { MegaTree.attributes($0, key: key.aesKey)?.name }
+            var rows = MegaTree.Builder()
+            rows.append(
+                handle: handle, parent: nil, kind: .file, size: response.s, time: Int(Date.now.timeIntervalSince1970),
+                name: name ?? handle.description, key: key
             )
-            return MegaTree(nodes: [node])
+            return rows.build()
         }
     }
 
@@ -77,8 +53,8 @@ public actor MegaSession {
         guard let key = node.fileKey else { throw MegaError.decryptionFailed }
 
         let command: DownloadCommand = switch context {
-        case .publicFolder, .account: DownloadCommand(node: node.handle)
-        case .publicFile(let handle, _): DownloadCommand(publicHandle: handle, wantsURL: true)
+        case .publicFolder, .account: DownloadCommand(node: node.id.description)
+        case .publicFile(let handle, _): DownloadCommand(publicHandle: handle.description, wantsURL: true)
         }
 
         let response: DownloadResponse = try await api.request(command)
@@ -91,88 +67,84 @@ public actor MegaSession {
     public func upload(
         fileAt source: URL,
         as name: String,
-        to parent: String,
+        to parent: NodeHandle,
         engine: UploadEngine = UploadEngine(),
         onProgress: @Sendable (Int) -> Void = { _ in }
     ) async throws -> MegaNode {
-        guard case .account(let account) = context else { throw MegaError.notAuthenticated }
-
+        let account = try signedIn()
         let size = try source.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         let ticket: UploadResponse = try await api.request(UploadCommand(s: size))
         guard let uploadURL = URL(string: ticket.p), uploadURL.scheme == "https" else {
             throw MegaError.malformedResponse
         }
 
-        let key = Data.random(count: 16)
-        let nonce = Data.random(count: 8)
-        let result = try await engine.transmit(
-            fileAt: source, to: uploadURL, key: key, nonce: nonce, size: size, onProgress: onProgress
-        )
+        let draft = MegaFileKey(aesKey: .random(), nonce: AESBlock.random().lowHalf, metaMAC: .zero)
+        let result = try await engine.transmit(fileAt: source, to: uploadURL, key: draft, size: size, onProgress: onProgress)
 
-        let fileKey = MegaFileKey(aesKey: key, nonce: nonce, metaMAC: result.metaMAC)
-        let node = NewNode(
-            h: result.token,
-            t: MegaNode.Kind.file.rawValue,
-            a: NodeDecryptor.encodedAttributes(name: name, key: key),
-            k: Base64URL.encode(AES128.ecbEncrypt(fileKey.packed, key: account.masterKey))
+        let packed = MegaFileKey(aesKey: draft.aesKey, nonce: draft.nonce, metaMAC: result.metaMAC).packed
+        let wrapped = (AES.encrypt(packed.head, key: account.masterKey), AES.encrypt(packed.tail, key: account.masterKey))
+        return try await commit(
+            NewNode(
+                h: result.token,
+                t: MegaNode.Kind.file.rawValue,
+                a: MegaTree.encodedAttributes(name: name, key: draft.aesKey),
+                k: withUnsafeBytes(of: wrapped, Base64URL.encode)
+            ),
+            to: parent, account: account
         )
-        return try await commit(node, to: parent)
     }
 
-    public func createFolder(named name: String, in parent: String) async throws -> MegaNode {
+    public func createFolder(named name: String, in parent: NodeHandle) async throws -> MegaNode {
+        let account = try signedIn()
+        let key = AESBlock.random()
+        return try await commit(
+            NewNode(
+                h: "xxxxxxxx",
+                t: MegaNode.Kind.folder.rawValue,
+                a: MegaTree.encodedAttributes(name: name, key: key),
+                k: Base64URL.encode(AES.encrypt(key, key: account.masterKey))
+            ),
+            to: parent, account: account
+        )
+    }
+
+    /// Moves every node under `parent` in one request. `recordingOrigin` saves each node's current
+    /// parent, which becomes its `restoreTarget`.
+    public func move(_ nodes: [MegaNode], to parent: NodeHandle, recordingOrigin: Bool = false) async throws {
+        try await run(nodes.flatMap { node in
+            let move = NodeCommand.move(node.id, to: parent)
+            guard recordingOrigin, let origin = node.parent?.id, let key = node.attributeKey else { return [move] }
+            let attributes = MegaTree.encodedAttributes(name: node.name, restoreHandle: origin, key: key)
+            return [.setAttributes(of: node.id, to: attributes), move]
+        })
+    }
+
+    /// Returns every node that has a `restoreTarget` to it, in one request.
+    public func putBack(_ nodes: [MegaNode]) async throws {
+        try await run(nodes.compactMap { node in node.restoreTarget.map { .move(node.id, to: $0.id) } })
+    }
+
+    public func delete(_ nodes: [MegaNode]) async throws {
+        try await run(nodes.map { .delete($0.id) })
+    }
+
+    /// Sends node commands as one batch; the server applies each, and the first failure is thrown.
+    private func run(_ commands: [NodeCommand]) async throws {
+        _ = try signedIn()
+        guard !commands.isEmpty else { return }
+        _ = try await api.body(for: commands)
+    }
+
+    private func signedIn() throws -> AccountSession {
         guard case .account(let account) = context else { throw MegaError.notAuthenticated }
-
-        let key = Data.random(count: 16)
-        let node = NewNode(
-            h: "xxxxxxxx",
-            t: MegaNode.Kind.folder.rawValue,
-            a: NodeDecryptor.encodedAttributes(name: name, key: key),
-            k: Base64URL.encode(AES128.ecbEncrypt(key, key: account.masterKey))
-        )
-        return try await commit(node, to: parent)
+        return account
     }
 
-    public func move(_ node: MegaNode, to parent: String, recordingOrigin: Bool = false) async throws {
-        guard case .account = context else { throw MegaError.notAuthenticated }
-
-        if recordingOrigin, let origin = node.parentHandle {
-            try await setRestoreHandle(origin, on: node)
-        }
-        let _: Int = try await api.request(MoveCommand(n: node.handle, t: parent))
-    }
-
-    private func setRestoreHandle(_ origin: String, on node: MegaNode) async throws {
-        guard let key = node.key?.attributeKey else { throw MegaError.decryptionFailed }
-
-        let encoded = NodeDecryptor.encodedAttributes(name: node.name, restoreHandle: origin, key: key)
-        let _: Int = try await api.request(SetAttributesCommand(n: node.handle, at: encoded))
-    }
-
-    public func delete(_ node: MegaNode) async throws {
-        guard case .account = context else { throw MegaError.notAuthenticated }
-        let _: Int = try await api.request(DeleteCommand(n: node.handle))
-    }
-
-    private func commit(_ node: NewNode, to parent: String) async throws -> MegaNode {
-        let response: PutResponse = try await api.request(PutCommand(t: parent, n: [node]))
-        guard let created = response.f.first.flatMap(decryptor.decrypt) else {
+    private func commit(_ node: NewNode, to parent: NodeHandle, account: AccountSession) async throws -> MegaNode {
+        let body = try await api.body(for: [PutCommand(t: parent.description, n: [node])])
+        guard let created = try MegaTree(listing: body, keyring: Keyring(account: account)).roots.first else {
             throw MegaError.malformedResponse
         }
         return created
-    }
-
-    static func shareKeys(from entries: [ShareKeyEntry]?, masterKey: Data) -> [String: Data] {
-        var keys = [String: Data]()
-        for entry in entries ?? [] {
-            guard let wrapped = Base64URL.decode(entry.k), wrapped.count == 16 else { continue }
-            let handle = Data(entry.h.utf8)
-            if let authority = entry.ha.flatMap(Base64URL.decode) {
-                guard handle.count == 8,
-                      AES128.ecbEncrypt(handle + handle, key: masterKey) == authority
-                else { continue }
-            }
-            keys[entry.h] = AES128.ecbDecrypt(wrapped, key: masterKey)
-        }
-        return keys
     }
 }

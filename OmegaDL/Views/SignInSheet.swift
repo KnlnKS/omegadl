@@ -66,6 +66,10 @@ struct SignInSheet: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
+            } else if needsSecondFactor {
+                Text("Enter the code from your authenticator app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             HStack {
@@ -88,6 +92,11 @@ struct SignInSheet: View {
         .padding(20)
         .frame(width: 420)
         .onAppear { focus = .email }
+        .onChange(of: email) {
+            needsSecondFactor = false
+            secondFactor = ""
+        }
+        .onChange(of: [email, password, secondFactor]) { errorMessage = nil }
         .animation(fluidAnimation, value: needsSecondFactor)
         .animation(fluidAnimation, value: errorMessage)
     }
@@ -105,13 +114,12 @@ struct SignInSheet: View {
                     password: password,
                     secondFactorCode: needsSecondFactor ? secondFactor : nil
                 )
-                let session = try await MegaLogin.logIn(credentials, api: APIClient())
+                let session = try await MegaLogin.logIn(credentials)
                 try model.signIn(with: session)
                 dismiss()
             } catch MegaError.api(.multiFactorRequired) {
                 needsSecondFactor = true
                 focus = .secondFactor
-                errorMessage = "Enter the code from your authenticator app."
             } catch MegaError.api(.notFound), MegaError.api(.badArguments) {
                 errorMessage = "Incorrect email or password."
             } catch MegaError.api(.tooMany) {

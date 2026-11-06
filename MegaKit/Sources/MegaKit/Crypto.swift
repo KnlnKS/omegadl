@@ -1,95 +1,101 @@
 import CommonCrypto
 import Foundation
 
-public enum AES128 {
-    public static let blockSize = kCCBlockSizeAES128
-    public static let keySize = kCCKeySizeAES128
+/// One AES block held inline. MEGA keys, IVs and chunk MACs all have this shape.
+public typealias AESBlock = SIMD16<UInt8>
 
-    public static func ecbEncrypt(_ data: Data, key: Data) -> Data {
-        crypt(data, key: key, operation: kCCEncrypt, options: kCCOptionECBMode, iv: nil)
+extension AESBlock {
+    static func random() -> AESBlock {
+        var generator = SystemRandomNumberGenerator()
+        return unsafeBitCast((generator.next() as UInt64, generator.next() as UInt64), to: AESBlock.self)
     }
 
-    public static func ecbDecrypt(_ data: Data, key: Data) -> Data {
-        crypt(data, key: key, operation: kCCDecrypt, options: kCCOptionECBMode, iv: nil)
+    init?(_ bytes: UnsafeRawBufferPointer) {
+        guard bytes.count == 16 else { return nil }
+        self = bytes.loadUnaligned(as: AESBlock.self)
     }
 
-    public static func cbcEncrypt(_ data: Data, key: Data, iv: Data = Data(count: AES128.blockSize)) -> Data {
-        crypt(data, key: key, operation: kCCEncrypt, options: 0, iv: iv)
+    /// Collapses a CBC-MAC into MEGA's 8-byte form by xoring adjacent 32-bit words.
+    var condensed: SIMD8<UInt8> {
+        SIMD8(lowHalf: lowHalf.lowHalf ^ lowHalf.highHalf, highHalf: highHalf.lowHalf ^ highHalf.highHalf)
+    }
+}
+
+/// An AES-128 context whose key schedule is built once and reused for every call.
+struct Cryptor: ~Copyable {
+    private let ref: CCCryptorRef
+
+    init(_ operation: Int, mode: Int, key: AESBlock, iv: AESBlock = .zero) {
+        var key = key
+        var iv = iv
+        var ref: CCCryptorRef?
+        let status = CCCryptorCreateWithMode(
+            CCOperation(operation), CCMode(mode), CCAlgorithm(kCCAlgorithmAES), CCPadding(ccNoPadding),
+            &iv, &key, kCCKeySizeAES128, nil, 0, 0,
+            CCModeOptions(mode == kCCModeCTR ? kCCModeOptionCTR_BE : 0), &ref
+        )
+        precondition(status == kCCSuccess, "AES context creation failed")
+        self.ref = ref!
     }
 
-    public static func cbcDecrypt(_ data: Data, key: Data, iv: Data = Data(count: AES128.blockSize)) -> Data {
-        crypt(data, key: key, operation: kCCDecrypt, options: 0, iv: iv)
-    }
+    deinit { CCCryptorRelease(ref) }
 
-    private static func crypt(_ data: Data, key: Data, operation: Int, options: Int, iv: Data?) -> Data {
-        precondition(key.count == keySize, "MEGA uses AES-128 exclusively")
-        precondition(data.count % blockSize == 0, "unpadded modes require whole blocks")
-        guard !data.isEmpty else { return Data() }
-
-        var output = Data(count: data.count)
+    /// Block modes need whole blocks; CTR accepts any length and may run in place.
+    func update(_ input: UnsafeRawPointer, into output: UnsafeMutableRawPointer, count: Int) {
         var moved = 0
-        let status = output.withUnsafeMutableBytes { out in
-            data.withUnsafeBytes { input in
-                key.withUnsafeBytes { keyBytes in
-                    withOptionalBytes(iv) { ivBytes in
-                        CCCrypt(
-                            CCOperation(operation), CCAlgorithm(kCCAlgorithmAES), CCOptions(options),
-                            keyBytes.baseAddress, keyBytes.count,
-                            ivBytes,
-                            input.baseAddress, input.count,
-                            out.baseAddress, out.count, &moved
-                        )
-                    }
-                }
-            }
-        }
-        precondition(status == kCCSuccess && moved == data.count)
+        let status = CCCryptorUpdate(ref, input, count, output, count, &moved)
+        precondition(status == kCCSuccess && moved == count, "AES update failed")
+    }
+
+    func update(_ buffer: UnsafeMutableRawBufferPointer) {
+        guard let base = buffer.baseAddress else { return }
+        update(base, into: base, count: buffer.count)
+    }
+
+    func reset(iv: AESBlock) {
+        var iv = iv
+        CCCryptorReset(ref, &iv)
+    }
+
+    func callAsFunction(_ block: AESBlock) -> AESBlock {
+        var input = block
+        var output = AESBlock()
+        update(&input, into: &output, count: 16)
         return output
     }
 }
 
-public final class CTRCryptor {
-    private var cryptor: CCCryptorRef?
-
-    public init(key: Data, nonce: Data, blockOffset: UInt64 = 0) {
-        precondition(key.count == AES128.keySize)
-        precondition(nonce.count == 8)
-
-        var counter = nonce
-        withUnsafeBytes(of: blockOffset.bigEndian) { counter.append(contentsOf: $0) }
-
-        let status = counter.withUnsafeBytes { iv in
-            key.withUnsafeBytes { keyBytes in
-                CCCryptorCreateWithMode(
-                    CCOperation(kCCEncrypt), CCMode(kCCModeCTR), CCAlgorithm(kCCAlgorithmAES),
-                    CCPadding(ccNoPadding), iv.baseAddress, keyBytes.baseAddress, keyBytes.count,
-                    nil, 0, 0, CCModeOptions(kCCModeOptionCTR_BE), &cryptor
-                )
-            }
-        }
-        precondition(status == kCCSuccess)
+enum AES {
+    static func encrypt(_ block: AESBlock, key: AESBlock) -> AESBlock {
+        Cryptor(kCCEncrypt, mode: kCCModeECB, key: key)(block)
     }
 
-    deinit {
-        if let cryptor { CCCryptorRelease(cryptor) }
+    static func decrypt(_ block: AESBlock, key: AESBlock) -> AESBlock {
+        Cryptor(kCCDecrypt, mode: kCCModeECB, key: key)(block)
     }
 
-    public func process(_ data: Data) -> Data {
+    /// ECB/CBC over whole blocks; CommonCrypto forbids these modes in place, hence two buffers.
+    static func crypt(
+        _ operation: Int, mode: Int, key: AESBlock, iv: AESBlock = .zero,
+        _ input: UnsafeRawBufferPointer, into output: UnsafeMutableRawPointer
+    ) {
+        precondition(input.count % 16 == 0, "block modes need whole blocks")
+        guard let base = input.baseAddress else { return }
+        Cryptor(operation, mode: mode, key: key, iv: iv).update(base, into: output, count: input.count)
+    }
+
+    static func crypt(_ operation: Int, mode: Int, key: AESBlock, iv: AESBlock = .zero, _ data: Data) -> Data {
         guard !data.isEmpty else { return Data() }
         var output = Data(count: data.count)
-        var moved = 0
-        let status = output.withUnsafeMutableBytes { out in
-            data.withUnsafeBytes { input in
-                CCCryptorUpdate(cryptor, input.baseAddress, input.count, out.baseAddress, out.count, &moved)
-            }
+        output.withUnsafeMutableBytes { out in
+            data.withUnsafeBytes { crypt(operation, mode: mode, key: key, iv: iv, $0, into: out.baseAddress!) }
         }
-        precondition(status == kCCSuccess && moved == data.count)
         return output
     }
 }
 
-public enum PBKDF2 {
-    public static func sha512(password: Data, salt: Data, iterations: Int, length: Int) -> Data {
+enum PBKDF2 {
+    static func sha512(password: Data, salt: Data, iterations: Int, length: Int) -> Data {
         var output = Data(count: length)
         let status = output.withUnsafeMutableBytes { out in
             password.withUnsafeBytes { pw in
@@ -106,21 +112,5 @@ public enum PBKDF2 {
         }
         precondition(status == kCCSuccess)
         return output
-    }
-}
-
-func withOptionalBytes<R>(_ data: Data?, _ body: (UnsafeRawPointer?) -> R) -> R {
-    guard let data else { return body(nil) }
-    return data.withUnsafeBytes { body($0.baseAddress) }
-}
-
-extension Data {
-    static func random(count: Int) -> Data {
-        Data((0..<count).map { _ in UInt8.random(in: .min ... .max) })
-    }
-
-    func xor(_ other: Data) -> Data {
-        precondition(count == other.count)
-        return Data(zip(self, other).map(^))
     }
 }

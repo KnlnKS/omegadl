@@ -1,68 +1,90 @@
+import CommonCrypto
 import Foundation
 
-public struct MegaChunk: Sendable, Equatable {
-    public let offset: Int
-    public let length: Int
+/// MEGA MACs files in chunks that grow by 128 KB up to 1 MB. The layout is closed-form, so nothing is stored.
+enum Chunking {
+    static let step = 131_072
+    static let maximum = 1_048_576
+    private static let rampCount = maximum / step
+    private static let rampBytes = step * rampCount * (rampCount + 1) / 2
 
-    public var range: Range<Int> { offset..<(offset + length) }
-}
-
-public enum MegaChunking {
-    public static let firstChunkSize = 131_072
-    public static let maximumChunkSize = 1_048_576
-
-    public static func chunks(fileSize: Int) -> [MegaChunk] {
-        var chunks = [MegaChunk]()
-        var offset = 0
-        var size = 0
-        while offset < fileSize {
-            size = min(size + firstChunkSize, maximumChunkSize)
-            let length = min(size, fileSize - offset)
-            chunks.append(MegaChunk(offset: offset, length: length))
-            offset += length
-        }
-        return chunks
+    static func offset(of chunk: Int) -> Int {
+        chunk < rampCount ? step * chunk * (chunk + 1) / 2 : rampBytes + (chunk - rampCount) * maximum
     }
 
-    public static func segments(chunks: [MegaChunk], targetBytes: Int) -> [Range<Int>] {
-        var segments = [Range<Int>]()
-        var start = 0
-        var bytes = 0
-        for (index, chunk) in chunks.enumerated() {
-            bytes += chunk.length
-            if bytes >= targetBytes || index == chunks.count - 1 {
-                segments.append(start..<(index + 1))
-                start = index + 1
-                bytes = 0
+    static func count(fileSize: Int) -> Int {
+        if fileSize > rampBytes { return rampCount + (fileSize - rampBytes + maximum - 1) / maximum }
+        var chunk = 0
+        while offset(of: chunk) < fileSize { chunk += 1 }
+        return chunk
+    }
+
+    static func bytes(of chunks: Range<Int>, fileSize: Int) -> Range<Int> {
+        offset(of: chunks.lowerBound)..<min(offset(of: chunks.upperBound), fileSize)
+    }
+
+    static func bytes(of chunk: Int, fileSize: Int) -> Range<Int> {
+        bytes(of: chunk..<(chunk + 1), fileSize: fileSize)
+    }
+
+    /// Runs of whole chunks, each at least `targetBytes` long except the last.
+    struct Segments: Sequence, IteratorProtocol {
+        let count: Int
+        let targetBytes: Int
+        var chunk = 0
+
+        init(fileSize: Int, targetBytes: Int) {
+            self.count = Chunking.count(fileSize: fileSize)
+            self.targetBytes = targetBytes
+        }
+
+        mutating func next() -> Range<Int>? {
+            guard chunk < count else { return nil }
+            let start = chunk
+            let startOffset = Chunking.offset(of: start)
+            repeat { chunk += 1 } while chunk < count && Chunking.offset(of: chunk) - startOffset < targetBytes
+            return start..<chunk
+        }
+    }
+}
+
+enum ChunkMAC {
+    private static let stripe = 16_384
+
+    /// CBC-MACs every chunk in `chunks`, whose plaintext starts at the first chunk's offset.
+    static func compute(_ plaintext: UnsafeRawBufferPointer, chunks: Range<Int>, fileSize: Int, key: MegaFileKey) -> [AESBlock] {
+        let cbc = Cryptor(kCCEncrypt, mode: kCCModeCBC, key: key.aesKey)
+        let base = Chunking.offset(of: chunks.lowerBound)
+        return withUnsafeTemporaryAllocation(byteCount: stripe, alignment: 16) { scratch in
+            chunks.map { chunk in
+                let range = Chunking.bytes(of: chunk, fileSize: fileSize)
+                var position = range.lowerBound - base
+                let end = range.upperBound - base
+                let whole = position + ((end - position) & ~15)
+                var last = AESBlock()
+                cbc.reset(iv: key.macIV)
+                while position < whole {
+                    let count = min(stripe, whole - position)
+                    cbc.update(plaintext.baseAddress! + position, into: scratch.baseAddress!, count: count)
+                    last = scratch.loadUnaligned(fromByteOffset: count - 16, as: AESBlock.self)
+                    position += count
+                }
+                if whole < end {
+                    var tail = AESBlock()
+                    withUnsafeMutableBytes(of: &tail) {
+                        $0.copyMemory(from: UnsafeRawBufferPointer(rebasing: plaintext[whole..<end]))
+                    }
+                    last = cbc(tail)
+                }
+                return last
             }
         }
-        return segments
-    }
-}
-
-public enum ChunkMAC {
-    public static func mac(forChunk plaintext: Data, key: Data, nonce: Data) -> Data {
-        precondition(nonce.count == 8)
-        var padded = plaintext
-        padded.append(Data(count: (16 - plaintext.count % 16) % 16))
-        guard !padded.isEmpty else { return nonce + nonce }
-        return Data(AES128.cbcEncrypt(padded, key: key, iv: nonce + nonce).suffix(16))
     }
 
-    public static func macs(
-        forSegment plaintext: Data, chunks: ArraySlice<MegaChunk>, key: Data, nonce: Data
-    ) -> [Data] {
-        guard let start = chunks.first?.offset else { return [] }
-        return chunks.map { chunk in
-            let lower = plaintext.startIndex + (chunk.offset - start)
-            return mac(forChunk: Data(plaintext[lower..<(lower + chunk.length)]), key: key, nonce: nonce)
-        }
-    }
-
-    public static func condense(_ macs: [Data], key: Data) -> Data {
-        guard !macs.isEmpty else { return Data(count: 8) }
-        let folded = Data(AES128.cbcEncrypt(macs.reduce(Data(), +), key: key).suffix(16))
-        return Data(folded.prefix(4)).xor(Data(folded[4..<8]))
-            + Data(folded[8..<12]).xor(Data(folded.suffix(4)))
+    static func condense(_ macs: some Sequence<AESBlock>, key: AESBlock) -> SIMD8<UInt8> {
+        let cbc = Cryptor(kCCEncrypt, mode: kCCModeCBC, key: key)
+        var last: AESBlock?
+        for mac in macs { last = cbc(mac) }
+        return last?.condensed ?? .zero
     }
 }

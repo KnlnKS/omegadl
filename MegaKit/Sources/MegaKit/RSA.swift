@@ -1,19 +1,19 @@
 import BigInt
 import Foundation
 
-public struct RSAPrivateKey: Sendable {
+struct RSAPrivateKey: Sendable {
     let p: BigUInt
     let q: BigUInt
     let d: BigUInt
     let u: BigUInt
 
-    public init?(privkBlob: Data) {
+    init?(privkBlob: Data) {
         guard let components = MPI.decode(privkBlob, count: 4) else { return nil }
         (p, q, d, u) = (components[0], components[1], components[2], components[3])
         guard p > 1, q > 1 else { return nil }
     }
 
-    public func decrypt(_ ciphertext: BigUInt) -> Data {
+    func decrypt(_ ciphertext: BigUInt) -> Data {
         let xp = (ciphertext % p).power(d % (p - 1), modulus: p)
         let xq = (ciphertext % q).power(d % (q - 1), modulus: q)
 
@@ -28,8 +28,8 @@ public struct RSAPrivateKey: Sendable {
     }
 }
 
-public enum MPI {
-    public static func decode(_ data: Data, count: Int) -> [BigUInt]? {
+enum MPI {
+    static func decode(_ data: Data, count: Int) -> [BigUInt]? {
         var offset = data.startIndex
         var components = [BigUInt]()
 
@@ -45,7 +45,7 @@ public enum MPI {
         return components
     }
 
-    public static func value(_ data: Data) -> BigUInt? {
+    static func value(_ data: Data) -> BigUInt? {
         guard data.count > 2 else { return nil }
         return BigUInt(Data(data.dropFirst(2)))
     }

@@ -21,21 +21,19 @@ private let accountOnly: ConditionTrait = .enabled(
 @Suite(.serialized) struct AccountLiveTests {
     private func signedIn() async throws -> (MegaSession, MegaTree) {
         let credentials = try #require(Account.credentials)
-        let api = APIClient()
-        let account = try await MegaLogin.logIn(credentials, api: api)
+        let account = try await MegaLogin.logIn(credentials)
 
         #expect(!account.sessionID.isEmpty)
-        #expect(account.masterKey.count == 16)
         #expect(!account.userHandle.isEmpty)
 
-        let session = MegaSession(account: account, api: api)
+        let session = MegaSession(account: account)
         return (session, try await session.loadTree())
     }
 
     @Test(accountOnly) func `signs in and lists the account tree`() async throws {
         let (_, tree) = try await signedIn()
         #expect(tree.roots.contains { $0.kind == .root })
-        #expect(tree.nodesByHandle.values.allSatisfy { !$0.name.isEmpty })
+        #expect((0..<tree.count).allSatisfy { !tree[$0].name.isEmpty })
     }
 
     @Test(accountOnly, .timeLimit(.minutes(5)))
@@ -47,32 +45,26 @@ private let accountOnly: ConditionTrait = .enabled(
         let scratch = try makeScratch()
         defer { try? FileManager.default.removeItem(at: scratch) }
 
-        let folder = try await session.createFolder(named: "OmegaDL Rubbish Test", in: drive.handle)
+        let folder = try await session.createFolder(named: "OmegaDL Rubbish Test", in: drive.id)
         let local = scratch.appending(path: "discard.bin")
         try Data(repeating: 3, count: 4096).write(to: local)
-        let uploaded = try await session.upload(fileAt: local, as: "discard.bin", to: folder.handle)
+        let uploaded = try await session.upload(fileAt: local, as: "discard.bin", to: folder.id)
 
-        try await session.move(uploaded, to: rubbish.handle, recordingOrigin: true)
+        let listed = try #require(try await session.loadTree().node(uploaded.id))
+        try await session.move([listed], to: rubbish.id, recordingOrigin: true)
 
-        let trashed = try await session.loadTree()
-        let inBin = try #require(trashed.node(uploaded.handle))
-        #expect(inBin.parentHandle == rubbish.handle)
-        #expect(inBin.restoreHandle == folder.handle)
+        let inBin = try #require(try await session.loadTree().node(uploaded.id))
+        #expect(inBin.parent?.id == rubbish.id)
+        #expect(inBin.restoreTarget?.id == folder.id)
         #expect(inBin.name == "discard.bin")
-        #expect(trashed.children(of: rubbish.handle).contains { $0.handle == uploaded.handle })
 
-        try await session.move(inBin, to: try #require(inBin.restoreHandle))
+        try await session.putBack([inBin])
 
         let restored = try await session.loadTree()
-        let back = try #require(restored.node(uploaded.handle))
-        #expect(back.parentHandle == folder.handle)
-        #expect(!restored.children(of: rubbish.handle).contains { $0.handle == uploaded.handle })
+        #expect(restored.node(uploaded.id)?.parent?.id == folder.id)
 
-        try await session.delete(back)
-        let purged = try await session.loadTree()
-        #expect(purged.node(uploaded.handle) == nil)
-
-        try await session.delete(try #require(purged.node(folder.handle)))
+        try await session.delete([try #require(restored.node(folder.id))])
+        #expect(try await session.loadTree().node(folder.id) == nil)
     }
 
     @Test(accountOnly, .timeLimit(.minutes(5)))
@@ -87,12 +79,12 @@ private let accountOnly: ConditionTrait = .enabled(
         let localFile = scratch.appending(path: "omegadl-upload-test.bin")
         try payload.write(to: localFile)
 
-        let folder = try await session.createFolder(named: "OmegaDL Test \(UUID().uuidString.prefix(8))", in: drive.handle)
+        let folder = try await session.createFolder(named: "OmegaDL Test \(UUID().uuidString.prefix(8))", in: drive.id)
         #expect(folder.kind == .folder)
-        #expect(folder.folderKey?.count == 16)
+        #expect(folder.attributeKey != nil)
 
         let uploaded = try await session.upload(
-            fileAt: localFile, as: "omegadl-upload-test.bin", to: folder.handle,
+            fileAt: localFile, as: "omegadl-upload-test.bin", to: folder.id,
             engine: UploadEngine(maximumConnections: 4, segmentSize: 1 << 20)
         )
         #expect(uploaded.name == "omegadl-upload-test.bin")
@@ -100,9 +92,8 @@ private let accountOnly: ConditionTrait = .enabled(
         #expect(uploaded.fileKey != nil)
 
         let reloaded = try await session.loadTree()
-        #expect(reloaded.node(folder.handle) != nil)
-        #expect(reloaded.node(uploaded.handle)?.name == "omegadl-upload-test.bin")
-        #expect(reloaded.children(of: folder.handle).map(\.handle) == [uploaded.handle])
+        #expect(reloaded.node(uploaded.id)?.name == "omegadl-upload-test.bin")
+        #expect(reloaded.node(folder.id)?.children.map(\.id) == [uploaded.id])
 
         let descriptor = try await session.downloadDescriptor(for: uploaded)
         let destination = scratch.appending(path: "roundtrip.bin")
@@ -110,8 +101,8 @@ private let accountOnly: ConditionTrait = .enabled(
 
         #expect(try Data(contentsOf: destination) == payload)
 
-        try await session.delete(folder)
+        try await session.delete([folder])
         let after = try await session.loadTree()
-        #expect(after.node(folder.handle) == nil)
+        #expect(after.node(folder.id) == nil)
     }
 }

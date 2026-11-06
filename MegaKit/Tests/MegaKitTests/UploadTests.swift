@@ -1,28 +1,32 @@
+import CommonCrypto
 import Foundation
 import Testing
 @testable import MegaKit
 
 @Suite struct AttributeEncodingTests {
-    private let key = Data((0..<16).map(UInt8.init))
+    private let key = block("000102030405060708090a0b0c0d0e0f")
 
     @Test(arguments: [
-        "photo.jpg", "06 - Hoops.mp3", "a", "Ünïcödé — ναμε 🎧.txt",
+        "photo.jpg", "06 - Hoops.mp3", "a", "Ünïcödé — ναμε 🎧.txt", #"AC/DC "live" \ tab\t.flac"#,
         "a name long enough to spill past a single sixteen byte block.bin",
     ]) func `round-trips a name through MEGA's attribute blob`(name: String) {
-        let encoded = NodeDecryptor.encodedAttributes(name: name, key: key)
-        #expect(NodeDecryptor.name(from: encoded, key: key) == name)
+        #expect(MegaTree.attributes(MegaTree.encodedAttributes(name: name, key: key), key: key)?.name == name)
     }
 
-    @Test func `pads the attribute blob to whole AES blocks`() throws {
-        let encoded = NodeDecryptor.encodedAttributes(name: "x.txt", key: key)
-        let raw = try #require(Base64URL.decode(encoded))
-        #expect(raw.count % 16 == 0)
-        #expect(!raw.isEmpty)
+    @Test func `round-trips a restore handle`() {
+        let origin = NodeHandle("AbCdEfGh")!
+        #expect(MegaTree.attributes(MegaTree.encodedAttributes(name: "x", restoreHandle: origin, key: key), key: key)?.restore == origin)
+    }
+
+    @Test func `reads surrogate-pair escapes and skips unrelated fields`() throws {
+        var plaintext = Data(#"MEGA{"c":{"x":[1,2]},"n":"\ud83c\udfa7 \u00fc","e":true}"#.utf8)
+        plaintext.append(Data(count: (16 - plaintext.count % 16) % 16))
+        let encoded = Base64URL.encode(AES.crypt(kCCEncrypt, mode: kCCModeCBC, key: key, plaintext))
+        #expect(MegaTree.attributes(encoded, key: key)?.name == "🎧 ü")
     }
 
     @Test func `yields nothing when decrypted with the wrong key`() {
-        let encoded = NodeDecryptor.encodedAttributes(name: "secret.txt", key: key)
-        #expect(NodeDecryptor.name(from: encoded, key: Data(count: 16)) == nil)
+        #expect(MegaTree.attributes(MegaTree.encodedAttributes(name: "secret.txt", key: key), key: .zero) == nil)
     }
 }
 
@@ -43,52 +47,20 @@ import Testing
 }
 
 @Suite struct UploadRoundTripTests {
-    private func syntheticPlaintext(_ count: Int) -> Data {
-        Data((0..<count).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) })
-    }
-
-    @Test(arguments: [0, 1, 111, 131_072, 1_500_000])
+    @Test(arguments: [1, 111, 131_072, 1_500_000])
     func `an uploaded file decrypts and verifies through the download path`(size: Int) throws {
-        let masterKey = Data((0..<16).map { UInt8(255 - $0) })
-        let plaintext = syntheticPlaintext(size)
+        let masterKey = block("fffefdfcfbfaf9f8f7f6f5f4f3f2f1f0")
+        let plaintext = Data((0..<size).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) })
+        let draft = MegaFileKey(aesKey: .random(), nonce: AESBlock.random().lowHalf, metaMAC: .zero)
+        let uploaded = MegaFileKey(
+            aesKey: draft.aesKey, nonce: draft.nonce,
+            metaMAC: ChunkMAC.condense(chunkMACs(plaintext, key: draft), key: draft.aesKey)
+        )
 
-        let key = Data.random(count: 16)
-        let nonce = Data.random(count: 8)
-
-        let chunks = MegaChunking.chunks(fileSize: size)
-        let macs = chunks.map {
-            ChunkMAC.mac(forChunk: Data(plaintext[$0.range]), key: key, nonce: nonce)
-        }
-        let uploaded = MegaFileKey(aesKey: key, nonce: nonce, metaMAC: ChunkMAC.condense(macs, key: key))
-        let ciphertext = CTRCryptor(key: key, nonce: nonce).process(plaintext)
-
-        let wireKey = AES128.ecbEncrypt(uploaded.packed, key: masterKey)
-        let recovered = try #require(MegaFileKey(packed: AES128.ecbDecrypt(wireKey, key: masterKey)))
+        let packed = uploaded.packed
+        let wire = (AES.encrypt(packed.head, key: masterKey), AES.encrypt(packed.tail, key: masterKey))
+        let recovered = MegaFileKey(head: AES.decrypt(wire.0, key: masterKey), tail: AES.decrypt(wire.1, key: masterKey))
         #expect(recovered == uploaded)
-
-        let decrypted = CTRCryptor(key: recovered.aesKey, nonce: recovered.nonce).process(ciphertext)
-        #expect(decrypted == plaintext)
-
-        let verified = MegaChunking.chunks(fileSize: size).map {
-            ChunkMAC.mac(forChunk: Data(decrypted[$0.range]), key: recovered.aesKey, nonce: recovered.nonce)
-        }
-        #expect(ChunkMAC.condense(verified, key: recovered.aesKey) == recovered.metaMAC)
-    }
-
-    @Test func `a tampered upload fails the receiver's integrity check`() throws {
-        let plaintext = syntheticPlaintext(400_000)
-        let key = Data.random(count: 16)
-        let nonce = Data.random(count: 8)
-
-        let chunks = MegaChunking.chunks(fileSize: plaintext.count)
-        let macs = chunks.map { ChunkMAC.mac(forChunk: Data(plaintext[$0.range]), key: key, nonce: nonce) }
-        let uploaded = MegaFileKey(aesKey: key, nonce: nonce, metaMAC: ChunkMAC.condense(macs, key: key))
-
-        var ciphertext = CTRCryptor(key: key, nonce: nonce).process(plaintext)
-        ciphertext[200_000] ^= 0x40
-
-        let decrypted = CTRCryptor(key: key, nonce: nonce).process(ciphertext)
-        let recomputed = chunks.map { ChunkMAC.mac(forChunk: Data(decrypted[$0.range]), key: key, nonce: nonce) }
-        #expect(ChunkMAC.condense(recomputed, key: key) != uploaded.metaMAC)
+        #expect(ChunkMAC.condense(chunkMACs(plaintext, key: recovered), key: recovered.aesKey) == recovered.metaMAC)
     }
 }

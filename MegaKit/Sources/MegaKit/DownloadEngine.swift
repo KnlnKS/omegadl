@@ -1,9 +1,16 @@
+import CommonCrypto
 import CryptoKit
-import Darwin
 import Foundation
 
+public struct DownloadDescriptor: Sendable {
+    public let url: URL
+    public let size: Int
+    public let key: MegaFileKey
+    public let name: String
+}
+
 public struct DownloadEngine: Sendable {
-    public static let partExtension = "omegadl-part"
+    static let partExtension = "omegadl-part"
 
     public let maximumConnections: Int
     let segmentSize: Int
@@ -19,19 +26,21 @@ public struct DownloadEngine: Sendable {
             .appending(path: "PartialDownloads")
     }
 
+    /// The engine is shared by up to `concurrentTransfers` downloads at once, possibly from one host.
     public init(
         maximumConnections: Int = 8,
+        concurrentTransfers: Int = 1,
         segmentSize: Int = 2 << 20,
         maximumAttempts: Int = 5,
         stateDirectory: URL = DownloadEngine.defaultStateDirectory
     ) {
         self.maximumConnections = max(1, maximumConnections)
-        self.segmentSize = max(MegaChunking.firstChunkSize, segmentSize)
+        self.segmentSize = max(Chunking.step, segmentSize)
         self.maximumAttempts = maximumAttempts
         self.stateDirectory = stateDirectory
 
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = self.maximumConnections
+        configuration.httpMaximumConnectionsPerHost = self.maximumConnections * max(1, concurrentTransfers)
         configuration.timeoutIntervalForRequest = 60
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: configuration)
@@ -43,54 +52,43 @@ public struct DownloadEngine: Sendable {
         to destination: URL,
         onProgress: @Sendable (Int) -> Void = { _ in }
     ) async throws {
-        let partURL = destination.appendingPathExtension(Self.partExtension)
+        let size = descriptor.size
+        let partURL = partURL(for: destination)
         let stateURL = stateURL(for: destination)
         try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
-        let chunks = MegaChunking.chunks(fileSize: descriptor.size)
 
-        let resumed = FileManager.default.fileExists(atPath: partURL.path)
-            ? PartialDownload(contentsOf: stateURL, size: descriptor.size, chunkCount: chunks.count)
-            : nil
-        var state = resumed ?? PartialDownload(size: descriptor.size, chunkCount: chunks.count)
+        let resuming = FileManager.default.fileExists(atPath: partURL.path)
+        let part = try File(partURL, flags: O_WRONLY | O_CREAT)
+        defer { part.close() }
+        try part.truncate(to: size)
+        var sidecar = try Sidecar(stateURL, size: size, resuming: resuming)
 
-        let file = try FileSlot(url: partURL, size: descriptor.size)
-        defer { file.close() }
-
-        var completed = state.completedBytes
+        var completed = sidecar.macs.indices.reduce(0) { total, chunk in
+            sidecar.macs[chunk] == .zero ? total : total + Chunking.bytes(of: chunk, fileSize: size).count
+        }
         onProgress(completed)
 
-        let pending = MegaChunking.segments(chunks: chunks, targetBytes: segmentSize)
-            .filter { range in range.contains { !state.isComplete(chunk: $0) } }
-
-        try await withThrowingTaskGroup(of: SegmentResult.self) { group in
-            var next = 0
+        var pending = Chunking.Segments(fileSize: size, targetBytes: segmentSize)
+            .filter { sidecar.macs[$0].contains(.zero) }
+            .makeIterator()
+        try await withThrowingTaskGroup(of: (chunks: Range<Int>, macs: [AESBlock]).self) { group in
             func submit() {
-                guard next < pending.count else { return }
-                let range = pending[next]
-                next += 1
-                group.addTask {
-                    try await fetch(segment: range, chunks: chunks, descriptor: descriptor, into: file)
-                }
+                guard let chunks = pending.next() else { return }
+                group.addTask { (chunks, try await fetch(chunks, of: descriptor, into: part)) }
             }
-            for _ in 0..<min(maximumConnections, pending.count) { submit() }
+            for _ in 0..<maximumConnections { submit() }
 
-            for try await result in group {
-                for (offset, mac) in result.macs.enumerated() {
-                    state.record(mac, forChunk: result.range.lowerBound + offset)
-                }
-                completed += result.byteCount
+            for try await (chunks, macs) in group {
+                try sidecar.record(macs, for: chunks)
+                completed += Chunking.bytes(of: chunks, fileSize: size).count
                 onProgress(completed)
-                try? state.write(to: stateURL)
                 submit()
             }
         }
 
-        file.close()
-
-        if descriptor.size > 0 {
-            guard let mac = state.condensedMAC(key: descriptor.key.aesKey), mac == descriptor.key.metaMAC else {
-                throw MegaError.integrityCheckFailed
-            }
+        guard size == 0 || ChunkMAC.condense(sidecar.macs, key: descriptor.key.aesKey) == descriptor.key.metaMAC else {
+            try? FileManager.default.removeItem(at: stateURL)
+            throw MegaError.integrityCheckFailed
         }
 
         try? FileManager.default.removeItem(at: destination)
@@ -98,44 +96,44 @@ public struct DownloadEngine: Sendable {
         try? FileManager.default.removeItem(at: stateURL)
     }
 
-    public func stateURL(for destination: URL) -> URL {
+    /// Deletes what an unfinished download to `destination` kept for resuming.
+    public func discardPartial(at destination: URL) {
+        try? FileManager.default.removeItem(at: partURL(for: destination))
+        try? FileManager.default.removeItem(at: stateURL(for: destination))
+    }
+
+    func partURL(for destination: URL) -> URL {
+        destination.appendingPathExtension(Self.partExtension)
+    }
+
+    func stateURL(for destination: URL) -> URL {
         let digest = SHA256.hash(data: Data(destination.standardizedFileURL.path.utf8))
-        return stateDirectory.appending(path: digest.map { String(format: "%02x", $0) }.joined() + ".state")
+        return stateDirectory.appending(path: digest.withUnsafeBytes(Base64URL.encode) + ".state")
     }
 
-    private struct SegmentResult: Sendable {
-        let range: Range<Int>
-        let macs: [Data]
-        let byteCount: Int
+    /// Fetches, decrypts and writes `chunks`, returning their MACs.
+    private func fetch(_ chunks: Range<Int>, of descriptor: DownloadDescriptor, into file: File) async throws -> [AESBlock] {
+        let bytes = Chunking.bytes(of: chunks, fileSize: descriptor.size)
+        let ciphertext = try await fetchBytes(from: descriptor.url, range: bytes)
+        guard ciphertext.count == bytes.count else { throw MegaError.malformedResponse }
+
+        let ctr = Cryptor(kCCEncrypt, mode: kCCModeCTR, key: descriptor.key.aesKey, iv: descriptor.key.counter(atBlock: bytes.lowerBound / 16))
+        return try withUnsafeTemporaryAllocation(byteCount: bytes.count, alignment: 16) { plaintext in
+            var position = 0
+            for region in ciphertext.regions {
+                region.withUnsafeBytes { input in
+                    guard let source = input.baseAddress else { return }
+                    ctr.update(source, into: plaintext.baseAddress! + position, count: input.count)
+                }
+                position += region.count
+            }
+            try file.write(UnsafeRawBufferPointer(plaintext), at: bytes.lowerBound)
+            return ChunkMAC.compute(UnsafeRawBufferPointer(plaintext), chunks: chunks, fileSize: descriptor.size, key: descriptor.key)
+        }
     }
 
-    private func fetch(
-        segment range: Range<Int>,
-        chunks: [MegaChunk],
-        descriptor: DownloadDescriptor,
-        into file: FileSlot
-    ) async throws -> SegmentResult {
-        let start = chunks[range.lowerBound].offset
-        let end = chunks[range.upperBound - 1].offset + chunks[range.upperBound - 1].length
-
-        let ciphertext = try await fetchBytes(from: descriptor.url, start: start, end: end)
-        guard ciphertext.count == end - start else { throw MegaError.malformedResponse }
-
-        let plaintext = CTRCryptor(
-            key: descriptor.key.aesKey, nonce: descriptor.key.nonce, blockOffset: UInt64(start / 16)
-        ).process(ciphertext)
-
-        try file.write(plaintext, at: start)
-
-        let macs = ChunkMAC.macs(
-            forSegment: plaintext, chunks: chunks[range],
-            key: descriptor.key.aesKey, nonce: descriptor.key.nonce
-        )
-        return SegmentResult(range: range, macs: macs, byteCount: end - start)
-    }
-
-    private func fetchBytes(from url: URL, start: Int, end: Int) async throws -> Data {
-        let ranged = url.appendingPathComponent("\(start)-\(end - 1)")
+    private func fetchBytes(from url: URL, range: Range<Int>) async throws -> Data {
+        let ranged = url.appendingPathComponent("\(range.lowerBound)-\(range.upperBound - 1)")
 
         return try await retrying(attempts: maximumAttempts) {
             let (data, response) = try await session.data(from: ranged)
@@ -153,40 +151,43 @@ public struct DownloadEngine: Sendable {
     }
 }
 
-final class FileSlot: @unchecked Sendable {
-    private let descriptor: Int32
-    private let lock = NSLock()
-    private var isOpen = true
+/// Resume state: a header, then one MAC slot per chunk at a fixed offset. A zero MAC marks a chunk
+/// not yet fetched (a real CBC-MAC is zero with probability 2⁻¹²⁸), so each finished segment writes
+/// only its own slots.
+struct Sidecar: ~Copyable {
+    private static let magic: UInt64 = 0x4F4D_444C_3200_0000
+    private static let headerBytes = 16
+    private let file: File
+    private(set) var macs: [AESBlock]
 
-    init(url: URL, size: Int) throws {
-        let fd = url.withUnsafeFileSystemRepresentation { path -> Int32 in
-            guard let path else { return -1 }
-            return open(path, O_WRONLY | O_CREAT, 0o644)
-        }
-        guard fd >= 0, ftruncate(fd, off_t(size)) == 0 else {
-            if fd >= 0 { Darwin.close(fd) }
-            throw MegaError.diskWriteFailed
-        }
-        self.descriptor = fd
+    init(_ url: URL, size: Int, resuming: Bool) throws {
+        try self.init(File(url, flags: O_RDWR | O_CREAT), size: size, resuming: resuming)
     }
 
-    func write(_ data: Data, at offset: Int) throws {
-        var written = 0
-        while written < data.count {
-            let result = data.withUnsafeBytes { buffer -> Int in
-                pwrite(descriptor, buffer.baseAddress! + written, data.count - written, off_t(offset + written))
-            }
-            guard result > 0 else { throw MegaError.diskWriteFailed }
-            written += result
+    /// Owns `file` before anything can throw, so a failure closes it through `deinit`.
+    private init(_ file: File, size: Int, resuming: Bool) throws {
+        self.file = file
+        macs = Array(repeating: .zero, count: Chunking.count(fileSize: size))
+        let length = Self.headerBytes + macs.count * MemoryLayout<AESBlock>.stride
+        let header = (Self.magic, UInt64(size))
+        var stored = (UInt64(0), UInt64(0))
+
+        if resuming, file.length == length {
+            try withUnsafeMutableBytes(of: &stored) { try file.read(into: $0, at: 0) }
+        }
+        if stored == header {
+            try macs.withUnsafeMutableBytes { try file.read(into: $0, at: Self.headerBytes) }
+        } else {
+            try file.truncate(to: 0)
+            try file.truncate(to: length)
+            try withUnsafeBytes(of: header) { try file.write($0, at: 0) }
         }
     }
 
-    func close() {
-        lock.lock()
-        defer { lock.unlock() }
-        if isOpen {
-            Darwin.close(descriptor)
-            isOpen = false
-        }
+    deinit { file.close() }
+
+    mutating func record(_ chunkMACs: [AESBlock], for chunks: Range<Int>) throws {
+        macs.replaceSubrange(chunks, with: chunkMACs)
+        try chunkMACs.withUnsafeBytes { try file.write($0, at: Self.headerBytes + chunks.lowerBound * MemoryLayout<AESBlock>.stride) }
     }
 }

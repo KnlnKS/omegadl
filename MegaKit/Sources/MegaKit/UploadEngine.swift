@@ -1,92 +1,78 @@
+import CommonCrypto
 import Foundation
 
-public struct UploadResult: Sendable {
-    public let token: String
-    public let metaMAC: Data
+struct UploadResult: Sendable {
+    let token: String
+    let metaMAC: SIMD8<UInt8>
 }
 
 public struct UploadEngine: Sendable {
-    private static let concurrentTransferHeadroom = 6
-
     public let maximumConnections: Int
     let segmentSize: Int
     let maximumAttempts: Int
     private let session: URLSession
 
-    public init(maximumConnections: Int = 8, segmentSize: Int = 2 << 20, maximumAttempts: Int = 5) {
+    /// The engine is shared by up to `concurrentTransfers` uploads at once, possibly to one host.
+    public init(maximumConnections: Int = 8, concurrentTransfers: Int = 1, segmentSize: Int = 2 << 20, maximumAttempts: Int = 5) {
         self.maximumConnections = max(1, maximumConnections)
-        self.segmentSize = max(MegaChunking.firstChunkSize, segmentSize)
+        self.segmentSize = max(Chunking.step, segmentSize)
         self.maximumAttempts = maximumAttempts
 
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.httpMaximumConnectionsPerHost = self.maximumConnections * Self.concurrentTransferHeadroom
+        configuration.httpMaximumConnectionsPerHost = self.maximumConnections * max(1, concurrentTransfers)
         configuration.timeoutIntervalForRequest = 120
         self.session = URLSession(configuration: configuration)
     }
 
+    /// Encrypts with `key`, ignoring its `metaMAC`; the result carries the MAC computed on the way.
     @concurrent
-    public func transmit(
+    func transmit(
         fileAt source: URL,
         to uploadURL: URL,
-        key: Data,
-        nonce: Data,
+        key: MegaFileKey,
         size: Int,
         onProgress: @Sendable (Int) -> Void = { _ in }
     ) async throws -> UploadResult {
         guard size > 0 else {
             let token = try await post(Data(), to: uploadURL, offset: 0)
-            return UploadResult(token: try Self.token(from: token), metaMAC: ChunkMAC.condense([], key: key))
+            return UploadResult(token: try Self.token(from: token), metaMAC: .zero)
         }
 
-        let handle = try FileHandle(forReadingFrom: source)
-        defer { try? handle.close() }
-
-        let chunks = MegaChunking.chunks(fileSize: size)
-        let cipher = CTRCryptor(key: key, nonce: nonce)
-        var macs = [Data]()
+        let file = try File(source, flags: O_RDONLY)
+        defer { file.close() }
+        var macs = [AESBlock](repeating: .zero, count: Chunking.count(fileSize: size))
+        var segments = Chunking.Segments(fileSize: size, targetBytes: segmentSize)
         var completed = 0
-        var tokens = [Data]()
+        var token: Data?
 
-        try await withThrowingTaskGroup(of: (Data, Int).self) { group in
-            var inFlight = 0
-
-            for segment in MegaChunking.segments(chunks: chunks, targetBytes: segmentSize) {
-                try Task.checkCancellation()
-                let offset = chunks[segment.lowerBound].offset
-                let last = chunks[segment.upperBound - 1]
-                let span = last.offset + last.length - offset
-                guard let plaintext = try handle.read(upToCount: span), plaintext.count == span
-                else { throw MegaError.diskWriteFailed }
-
-                macs.append(
-                    contentsOf: ChunkMAC.macs(
-                        forSegment: plaintext, chunks: chunks[segment], key: key, nonce: nonce
-                    )
-                )
-                let ciphertext = cipher.process(plaintext)
-
-                if inFlight >= maximumConnections, let (body, length) = try await group.next() {
-                    inFlight -= 1
-                    if !body.isEmpty { tokens.append(body) }
-                    completed += length
-                    onProgress(completed)
-                }
-
+        try await withThrowingTaskGroup(of: (chunks: Range<Int>, macs: [AESBlock], response: Data).self) { group in
+            func submit() {
+                guard let chunks = segments.next() else { return }
                 group.addTask {
-                    (try await post(ciphertext, to: uploadURL, offset: offset), ciphertext.count)
+                    let bytes = Chunking.bytes(of: chunks, fileSize: size)
+                    var body = Data(count: bytes.count)
+                    let macs = try body.withUnsafeMutableBytes { buffer in
+                        try file.read(into: buffer, at: bytes.lowerBound)
+                        let macs = ChunkMAC.compute(UnsafeRawBufferPointer(buffer), chunks: chunks, fileSize: size, key: key)
+                        Cryptor(kCCEncrypt, mode: kCCModeCTR, key: key.aesKey, iv: key.counter(atBlock: bytes.lowerBound / 16)).update(buffer)
+                        return macs
+                    }
+                    return (chunks, macs, try await post(body, to: uploadURL, offset: bytes.lowerBound))
                 }
-                inFlight += 1
             }
+            for _ in 0..<maximumConnections { submit() }
 
-            for try await (body, length) in group {
-                if !body.isEmpty { tokens.append(body) }
-                completed += length
+            for try await (chunks, chunkMACs, response) in group {
+                macs.replaceSubrange(chunks, with: chunkMACs)
+                if !response.isEmpty { token = response }
+                completed += Chunking.bytes(of: chunks, fileSize: size).count
                 onProgress(completed)
+                submit()
             }
         }
 
-        guard let raw = tokens.last else { throw MegaError.malformedResponse }
-        return UploadResult(token: try Self.token(from: raw), metaMAC: ChunkMAC.condense(macs, key: key))
+        guard let token else { throw MegaError.malformedResponse }
+        return UploadResult(token: try Self.token(from: token), metaMAC: ChunkMAC.condense(macs, key: key.aesKey))
     }
 
     private func post(_ body: Data, to uploadURL: URL, offset: Int) async throws -> Data {
@@ -107,11 +93,13 @@ public struct UploadEngine: Sendable {
 
     static func token(from body: Data) throws -> String {
         guard !body.isEmpty else { throw MegaError.malformedResponse }
-
-        let alphabet = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_".utf8)
-        if body.allSatisfy(alphabet.contains) {
-            return String(decoding: body, as: UTF8.self)
+        let isText = body.allSatisfy { byte in
+            switch byte {
+            case UInt8(ascii: "A")...UInt8(ascii: "Z"), UInt8(ascii: "a")...UInt8(ascii: "z"),
+                 UInt8(ascii: "0")...UInt8(ascii: "9"), UInt8(ascii: "-"), UInt8(ascii: "_"): true
+            default: false
+            }
         }
-        return Base64URL.encode(body)
+        return isText ? String(decoding: body, as: UTF8.self) : Base64URL.encode(body)
     }
 }

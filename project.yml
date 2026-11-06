@@ -5,6 +5,15 @@ options:
     macOS: "26.0"
   createIntermediateGroups: true
 
+settingGroups:
+  swift:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Manual
+
 packages:
   MegaKit:
     path: MegaKit
@@ -33,15 +42,26 @@ targets:
       path: OmegaDL/OmegaDL.entitlements
       properties:
         com.apple.security.app-sandbox: false
+    scheme:
+      testTargets:
+        - OmegaDLTests
     settings:
+      groups: [swift]
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.omegadl.OmegaDL
-        SWIFT_VERSION: "6.0"
-        SWIFT_STRICT_CONCURRENCY: complete
-        SWIFT_APPROACHABLE_CONCURRENCY: YES
-        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
-        CODE_SIGN_IDENTITY: "-"
-        CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: YES
         MARKETING_VERSION: "1.0"
         CURRENT_PROJECT_VERSION: "1"
+
+  OmegaDLTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: OmegaDLTests
+    dependencies:
+      - target: OmegaDL
+    settings:
+      groups: [swift]
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.omegadl.OmegaDLTests
+        GENERATE_INFOPLIST_FILE: YES

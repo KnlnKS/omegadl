@@ -1,26 +1,13 @@
 import Foundation
 
 struct FilesCommand: Encodable, Sendable {
+    static let account = FilesCommand(ca: nil)
+    static let folderLink = FilesCommand(ca: 1)
+
     let a = "f"
     let c = 1
     let r = 1
-    let ca: Int?
-
-    init(scopedToFolderLink: Bool) {
-        self.ca = scopedToFolderLink ? 1 : nil
-    }
-}
-
-struct FilesResponse: Decodable, Sendable {
-    let f: [RawNode]
-    let sn: String?
-    let ok: [ShareKeyEntry]?
-}
-
-struct ShareKeyEntry: Decodable, Sendable {
-    let h: String
-    let k: String
-    let ha: String?
+    private let ca: Int?
 }
 
 struct DownloadCommand: Encodable, Sendable {
@@ -75,23 +62,14 @@ struct PutCommand: Encodable, Sendable {
     let n: [NewNode]
 }
 
-struct PutResponse: Decodable, Sendable {
-    let f: [RawNode]
-}
+/// Changes one node; batches share one request.
+struct NodeCommand: Encodable, Sendable {
+    private let a: String
+    private let n: NodeHandle
+    private var t: NodeHandle?
+    private var at: String?
 
-struct DeleteCommand: Encodable, Sendable {
-    let a = "d"
-    let n: String
-}
-
-struct MoveCommand: Encodable, Sendable {
-    let a = "m"
-    let n: String
-    let t: String
-}
-
-struct SetAttributesCommand: Encodable, Sendable {
-    let a = "a"
-    let n: String
-    let at: String
+    static func move(_ node: NodeHandle, to parent: NodeHandle) -> Self { Self(a: "m", n: node, t: parent) }
+    static func delete(_ node: NodeHandle) -> Self { Self(a: "d", n: node) }
+    static func setAttributes(of node: NodeHandle, to attributes: String) -> Self { Self(a: "a", n: node, at: attributes) }
 }

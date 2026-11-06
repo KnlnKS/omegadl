@@ -2,94 +2,82 @@ import Foundation
 import MegaKit
 import Observation
 
-enum SourceRef: Codable, Hashable {
-    case link(URL)
-    case account(String)
+/// Saved as `{"link":{"url":…}}` or `{"account":{"email":…}}`.
+nonisolated enum SourceRef: Codable, Hashable, Sendable {
+    case link(url: String)
+    case account(email: String)
 }
 
 @Observable
-final class Source: Identifiable {
-    enum Kind: Sendable {
-        case link(MegaLink)
-        case account(AccountSession)
-    }
-
-    enum Status: Equatable {
+final class Source {
+    enum State {
         case idle
         case loading
-        case loaded
+        case loaded(MegaTree)
         case failed(String)
-
-        var isFailure: Bool {
-            if case .failed = self { true } else { false }
-        }
     }
 
-    let id = UUID()
-    let kind: Kind
+    let ref: SourceRef
     let session: MegaSession
 
-    private(set) var tree: MegaTree?
-    private(set) var status: Status = .idle
+    private(set) var state = State.idle
+    @ObservationIgnored private var fetching: Task<Void, any Error>?
+    /// Set when a refresh arrives mid-fetch, so the fetch runs again and reflects it.
+    @ObservationIgnored private var isStale = false
+    @ObservationIgnored private var pendingRefresh: Task<Void, any Error>?
 
-    init(link: MegaLink) throws {
-        self.kind = .link(link)
-        self.session = try MegaSession(link: link)
+    init(link: MegaLink) {
+        ref = .link(url: link.url.absoluteString)
+        session = MegaSession(link: link)
     }
 
     init(account: AccountSession) {
-        self.kind = .account(account)
-        self.session = MegaSession(account: account)
+        ref = .account(email: account.email)
+        session = MegaSession(account: account)
     }
 
-    var name: String {
-        switch kind {
-        case .link(let link): tree?.roots.first?.name ?? link.handle
-        case .account(let account): account.email
-        }
+    var tree: MegaTree? {
+        if case .loaded(let tree) = state { tree } else { nil }
     }
 
-    var link: MegaLink? {
-        if case .link(let link) = kind { link } else { nil }
+    var failure: String? {
+        if case .failed(let message) = state { message } else { nil }
     }
 
-    var ref: SourceRef {
-        switch kind {
-        case .link(let link): .link(link.url)
-        case .account(let account): .account(account.email)
-        }
-    }
-
-    private var loading: Task<Void, Never>?
-
+    /// Fetches the tree unless it is loaded or already loading.
     func load() async {
-        if let loading { return await loading.value }
-        guard status == .idle || status.isFailure else { return }
+        if tree == nil, fetching == nil { fetch() }
+        _ = await fetching?.result
+    }
 
-        let task = Task {
-            status = .loading
-            do {
-                tree = try await session.loadTree()
-                status = .loaded
-            } catch {
-                status = .failed(error.localizedDescription)
-            }
+    /// Fetches a tree that reflects every change made before the call. A failure keeps the last tree.
+    func refresh() async throws {
+        if fetching == nil { fetch() } else { isStale = true }
+        try await fetching?.value
+    }
+
+    /// Refreshes once activity settles, so a burst of uploads costs one listing.
+    func refreshSoon() {
+        pendingRefresh?.cancel()
+        pendingRefresh = Task {
+            try await Task.sleep(for: .seconds(1))
+            try await refresh()
         }
-        loading = task
-        await task.value
-        loading = nil
     }
 
-    private(set) var isRefreshing = false
-
-    func refresh() async {
-        guard !isRefreshing else { return }
-        isRefreshing = true
-        defer { isRefreshing = false }
-        if let updated = try? await session.loadTree() { tree = updated }
-    }
-
-    var allowsUpload: Bool {
-        if case .account = kind { true } else { false }
+    private func fetch() {
+        if tree == nil { state = .loading }
+        fetching = Task {
+            defer { fetching = nil }
+            repeat {
+                isStale = false
+                do {
+                    state = .loaded(try await session.loadTree())
+                } catch where !isStale {
+                    if tree == nil { state = .failed(error.localizedDescription) }
+                    throw error
+                } catch {}
+            } while isStale
+        }
     }
 }

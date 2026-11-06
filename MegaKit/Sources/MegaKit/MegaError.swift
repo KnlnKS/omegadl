@@ -38,11 +38,11 @@ public enum MegaError: Error, Sendable, Hashable {
     case malformedResponse
     case httpStatus(Int)
     case bandwidthExceeded(retryAfter: TimeInterval?)
-    case invalidLink
     case decryptionFailed
     case integrityCheckFailed
     case notAuthenticated
     case proofOfWorkFailed
+    case diskReadFailed
     case diskWriteFailed
     case keychainUnavailable
 
@@ -70,11 +70,11 @@ extension MegaError: LocalizedError {
         case .malformedResponse: "MEGA returned a response OmegaDL could not read."
         case .httpStatus(let code): "The transfer server returned HTTP \(code)."
         case .bandwidthExceeded: "MEGA's bandwidth limit for this link has been reached."
-        case .invalidLink: "That does not look like a MEGA link."
         case .decryptionFailed: "The decryption key does not match this item."
         case .integrityCheckFailed: "The downloaded data failed its integrity check."
         case .notAuthenticated: "Sign in to do that."
         case .proofOfWorkFailed: "Could not satisfy MEGA's anti-abuse challenge."
+        case .diskReadFailed: "OmegaDL could not read the file."
         case .diskWriteFailed: "OmegaDL could not write to the destination folder."
         case .keychainUnavailable: "OmegaDL could not save your session to the keychain."
         }

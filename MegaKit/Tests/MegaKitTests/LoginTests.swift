@@ -1,4 +1,5 @@
 import BigInt
+import CommonCrypto
 import Foundation
 import Testing
 @testable import MegaKit
@@ -46,19 +47,19 @@ private let expectedSID = "AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJ
     }
 
     @Test func `derives the session id from an encrypted csid`() throws {
-        let masterKey = Data((0..<16).map(UInt8.init))
+        let masterKey = block("000102030405060708090a0b0c0d0e0f")
         var blob = try #require(Base64URL.decode(privkBlob))
         blob.append(Data(count: (16 - blob.count % 16) % 16))
-        let wrapped = AES128.ecbEncrypt(blob, key: masterKey)
+        let wrapped = AES.crypt(kCCEncrypt, mode: kCCModeECB, key: masterKey, blob)
 
         let login = LoginResponse(k: "", privk: Base64URL.encode(wrapped), csid: csid, tsid: nil)
         #expect(try MegaLogin.resolveSessionID(login, masterKey: masterKey) == expectedSID)
     }
 
     @Test func `accepts a self-verifying tsid session`() throws {
-        let masterKey = Data((0..<16).map(UInt8.init))
-        let challenge = Data((0..<16).map { UInt8($0 &* 5) })
-        let tsid = Base64URL.encode(challenge + AES128.ecbEncrypt(challenge, key: masterKey))
+        let masterKey = block("000102030405060708090a0b0c0d0e0f")
+        let challenge = AESBlock((0..<16).map { UInt8($0 &* 5) })
+        let tsid = withUnsafeBytes(of: (challenge, AES.encrypt(challenge, key: masterKey)), Base64URL.encode)
 
         let login = LoginResponse(k: "", privk: nil, csid: nil, tsid: tsid)
         #expect(try MegaLogin.resolveSessionID(login, masterKey: masterKey) == tsid)
@@ -67,17 +68,14 @@ private let expectedSID = "AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJ
     @Test func `rejects a tsid that fails its own check`() {
         let login = LoginResponse(k: "", privk: nil, csid: nil, tsid: Base64URL.encode(Data(count: 32)))
         #expect(throws: MegaError.decryptionFailed) {
-            try MegaLogin.resolveSessionID(login, masterKey: Data((0..<16).map(UInt8.init)))
+            try MegaLogin.resolveSessionID(login, masterKey: block("000102030405060708090a0b0c0d0e0f"))
         }
     }
 }
 
 @Suite struct LegacyDerivationTests {
     @Test func `derives the v1 password key`() {
-        #expect(
-            MegaLogin.legacyKey(password: "password123").map { String(format: "%02x", $0) }.joined()
-                == "22f683851212b50a92114454fa542b99"
-        )
+        #expect(MegaLogin.legacyKey(password: "password123") == block("22f683851212b50a92114454fa542b99"))
     }
 
     @Test func `derives the v1 user hash`() {
@@ -85,34 +83,58 @@ private let expectedSID = "AQECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJ
         #expect(MegaLogin.legacyUserHash(email: "test@example.com", key: key) == "jNU3r7YHrLA")
     }
 
-    @Test func `pads a password shorter than one block`() {
-        #expect(MegaLogin.legacyKey(password: "a").count == 16)
-        #expect(MegaLogin.legacyKey(password: "").count == 16)
+    @Test func `derives distinct keys for short and multi-block passwords`() {
+        #expect(MegaLogin.legacyKey(password: "") != MegaLogin.legacyKey(password: "a"))
         #expect(MegaLogin.legacyKey(password: "a") != MegaLogin.legacyKey(password: "b"))
+        #expect(
+            MegaLogin.legacyKey(password: "a password longer than one block")
+                != MegaLogin.legacyKey(password: "a password longer than one")
+        )
     }
 }
 
 @Suite(.serialized) struct KeychainTests {
     private let session = AccountSession(
-        sessionID: "test-session", masterKey: Data((0..<16).map(UInt8.init)),
+        sessionID: "test-session", masterKey: block("000102030405060708090a0b0c0d0e0f"),
         userHandle: "abcd1234", email: "omegadl-tests@example.invalid"
     )
 
-    @Test func `saves, reloads and removes a session`() throws {
-        Keychain.remove(email: session.email)
-        try Keychain.save(session)
-
-        let stored = try #require(Keychain.session(email: session.email))
-        #expect(stored == session)
+    @Test func `saves, reloads and removes a session`() async throws {
+        let keychain = Keychain(service: "com.omegadl.tests")
+        keychain.remove()
+        try keychain.save(session)
+        #expect(await keychain.session() == session)
 
         let updated = AccountSession(
             sessionID: "rotated", masterKey: session.masterKey,
             userHandle: session.userHandle, email: session.email
         )
-        try Keychain.save(updated)
-        #expect(Keychain.session(email: session.email)?.sessionID == "rotated")
+        try keychain.save(updated)
+        #expect(await keychain.session()?.sessionID == "rotated")
 
-        Keychain.remove(email: session.email)
-        #expect(Keychain.session(email: session.email) == nil)
+        keychain.remove()
+        #expect(await keychain.session() == nil)
+    }
+}
+
+@Suite struct StorageFormatTests {
+    private func json(_ value: some Encodable) throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return String(decoding: try encoder.encode(value), as: UTF8.self)
+    }
+
+    @Test func `stores a session's master key as base64url`() throws {
+        let session = AccountSession(sessionID: "sid", masterKey: block("000102030405060708090a0b0c0d0e0f"), userHandle: "abcd1234", email: "a@b.c")
+        let stored = #"{"email":"a@b.c","masterKey":"AAECAwQFBgcICQoLDA0ODw","sessionID":"sid","userHandle":"abcd1234"}"#
+        #expect(try json(session) == stored)
+        #expect(try JSONDecoder().decode(AccountSession.self, from: Data(stored.utf8)) == session)
+    }
+
+    @Test func `stores a node handle as its eight characters`() throws {
+        let handle = try #require(NodeHandle("LIkEAD7L"))
+        #expect(try json([handle]) == #"["LIkEAD7L"]"#)
+        #expect(try JSONDecoder().decode([NodeHandle].self, from: Data(#"["LIkEAD7L"]"#.utf8)) == [handle])
+        #expect(throws: DecodingError.self) { try JSONDecoder().decode([NodeHandle].self, from: Data(#"["short"]"#.utf8)) }
     }
 }

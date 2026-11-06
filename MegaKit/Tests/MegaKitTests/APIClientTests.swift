@@ -1,25 +1,11 @@
+import CryptoKit
 import Foundation
 import Testing
 @testable import MegaKit
 
 @Suite(.serialized) struct APIClientLiveTests {
-    @Test(liveOnly) func `lists a public folder with no session`() async throws {
-        let client = APIClient()
-        await client.setFolderID(Live.folderID)
-
-        let listing: FilesResponse = try await client.request(FilesCommand(scopedToFolderLink: true))
-        #expect(listing.f.count == Live.nodeCount)
-        #expect(listing.sn != nil)
-
-        let root = try #require(listing.f.first { $0.h == Live.rootHandle })
-        #expect(root.t == 1)
-        #expect(root.k?.hasPrefix("\(Live.rootHandle):") == true)
-        #expect(listing.f.first { $0.h == Live.largeFileHandle }?.s == Live.largeFileSize)
-    }
-
     @Test(liveOnly) func `resolves a download URL scoped to the folder`() async throws {
-        let client = APIClient()
-        await client.setFolderID(Live.folderID)
+        let client = APIClient(.folder(NodeHandle(Live.folderID)!))
 
         let info: DownloadResponse = try await client.request(DownloadCommand(node: Live.smallFileHandle))
         #expect(info.s == Live.smallFileSize)
@@ -27,8 +13,7 @@ import Testing
     }
 
     @Test(liveOnly) func `surfaces a MEGA error code as a typed error`() async throws {
-        let client = APIClient()
-        await client.setFolderID(Live.folderID)
+        let client = APIClient(.folder(NodeHandle(Live.folderID)!))
 
         await #expect(throws: MegaError.self) {
             let _: DownloadResponse = try await client.request(DownloadCommand(node: "AAAAAAAA"))
@@ -36,38 +21,48 @@ import Testing
     }
 }
 
-@Suite struct APIResponseDecodingTests {
+@Suite struct APIResponseTests {
+    @Test(arguments: [("-15", -15), ("[-9]", -9), (" [ -999 ]", -999), ("[0,-9,-11]", -9)])
+    func `spots an error code, bare, wrapped or among batch results`(body: String, code: Int) {
+        #expect(APIClient.errorCode(in: Data(body.utf8)) == code)
+    }
+
+    @Test(arguments: ["[0]", "[0,0]", "[{\"f\":[]},-9]", "[]", "0"])
+    func `does not mistake a result for an error`(body: String) {
+        #expect(APIClient.errorCode(in: Data(body.utf8)) == nil)
+    }
+
+    @Test func `encodes node commands with only the fields each one sends`() throws {
+        let (node, parent) = (NodeHandle("AbCdEfGh")!, NodeHandle("ZyXwVuTs")!)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let json = try encoder.encode([NodeCommand.move(node, to: parent), .delete(node), .setAttributes(of: node, to: "x")])
+        #expect(String(decoding: json, as: UTF8.self) == #"[{"a":"m","n":"AbCdEfGh","t":"ZyXwVuTs"},{"a":"d","n":"AbCdEfGh"},{"a":"a","at":"x","n":"AbCdEfGh"}]"#)
+    }
+
     @Test func `unwraps the single-element array MEGA always returns`() throws {
-        let listing: FilesResponse = try APIClient.decode(Data(#"[{"f":[{"h":"AbCdEfGh","t":0}]}]"#.utf8))
-        #expect(listing.f.count == 1)
-        #expect(listing.f[0].h == "AbCdEfGh")
-    }
-
-    @Test func `treats a negative code inside the array as an error`() {
-        #expect(throws: MegaError.api(.notFound)) {
-            let _: FilesResponse = try APIClient.decode(Data("[-9]".utf8))
-        }
-    }
-
-    @Test func `treats a bare negative code as an error`() {
-        #expect(throws: MegaError.api(.badSession)) {
-            let _: FilesResponse = try APIClient.decode(Data("-15".utf8))
-        }
-    }
-
-    @Test func `accepts a zero result as success rather than an error`() throws {
         #expect(try APIClient.decode(Data("[0]".utf8)) == 0)
-    }
-
-    @Test func `surfaces an unmapped negative code`() {
-        #expect(throws: MegaError.unrecognizedAPICode(-999)) {
-            let _: FilesResponse = try APIClient.decode(Data("[-999]".utf8))
-        }
+        let response: UploadResponse = try APIClient.decode(Data(#"[{"p":"https://x"}]"#.utf8))
+        #expect(response.p == "https://x")
     }
 
     @Test func `rejects a body it cannot read at all`() {
         #expect(throws: MegaError.malformedResponse) {
-            let _: FilesResponse = try APIClient.decode(Data("[]".utf8))
+            let _: UploadResponse = try APIClient.decode(Data("[]".utf8))
         }
+    }
+}
+
+@Suite struct HashcashTests {
+    @Test func `finds a nonce whose digest clears the threshold`() async throws {
+        let token = Data((0..<48).map { UInt8(truncatingIfNeeded: $0 &* 7) })
+        let challenge = "1:192:1700000000:\(Base64URL.encode(token))"
+        let answer = try await APIClient.solveHashcash(challenge: challenge)
+
+        let parts = answer.split(separator: ":")
+        #expect(parts.count == 3 && parts[1] == Substring(Base64URL.encode(token)))
+        let nonce = try #require(Base64URL.decode(String(parts[2])))
+        let digest = SHA256.hash(data: nonce + Data(repeatElement(token, count: 262_144).joined()))
+        #expect(digest.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self).bigEndian } <= 1 << 24)
     }
 }

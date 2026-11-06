@@ -33,6 +33,7 @@ Builds are not signed with an Apple Developer ID, so macOS blocks the app until 
 brew install xcodegen
 swift test --package-path MegaKit
 xcodegen generate
+xcodebuild -project OmegaDL.xcodeproj -scheme OmegaDL test
 open OmegaDL.xcodeproj
 ```
 

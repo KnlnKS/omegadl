@@ -2,14 +2,15 @@ import MegaKit
 import SwiftUI
 
 struct SidebarView: View {
-    @Bindable var model: AppModel
+    let model: AppModel
 
     var body: some View {
         List(selection: selection) {
-            ForEach(model.accountItems) { item in
-                label(item).tag(item.id)
-            }
-            if !model.accountItems.isEmpty {
+            if let roots = model.account?.tree?.roots, !roots.isEmpty {
+                ForEach(roots) { root in
+                    label(root.name, symbol: symbol(for: root.kind))
+                        .tag(SidebarSelection.folder(root.id))
+                }
                 Divider()
                     .selectionDisabled()
             }
@@ -18,30 +19,40 @@ struct SidebarView: View {
         .navigationSplitViewColumnWidth(min: 190, ideal: 230, max: 340)
     }
 
-    private var selection: Binding<SidebarItem.ID?> {
-        Binding(get: { model.selectedItemID }, set: { model.select($0) })
+    private var selection: Binding<SidebarSelection?> {
+        Binding(get: { model.selection }, set: { if let selection = $0 { model.selection = selection } })
     }
 
     private var transfersRow: some View {
         let manager = model.transfers
         return HStack {
-            label(.transfers)
+            label("Transfers", symbol: "arrow.up.arrow.down")
             Spacer(minLength: 0)
-            if manager.activeCount > 0 {
+            if manager.list.activeCount > 0 {
                 TransferRing(fraction: manager.aggregateFraction)
             }
         }
-        .tag(SidebarItem.ID.transfers)
+        .tag(SidebarSelection.transfers)
         .accessibilityValue(
-            manager.activeCount == 0
+            manager.list.activeCount == 0
                 ? ""
-                : "\(manager.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
+                : "\(manager.list.activeCount) active, \(Int(manager.aggregateFraction * 100)) percent"
         )
     }
 
-    private func label(_ item: SidebarItem) -> some View {
-        Label(item.name, systemImage: item.symbol)
+    private func label(_ name: String, symbol: String) -> some View {
+        Label(name, systemImage: symbol)
             .lineLimit(1)
             .truncationMode(.middle)
+    }
+
+    private func symbol(for kind: MegaNode.Kind) -> String {
+        switch kind {
+        case .root: "cloud"
+        case .inbox: "tray"
+        case .rubbish: "trash"
+        case .folder: "folder"
+        case .file: "doc"
+        }
     }
 }

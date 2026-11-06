@@ -4,6 +4,7 @@ import SwiftUI
 struct FolderPickSheet: View {
     let pick: FolderPick
     let model: AppModel
+    private var selection: FileSelection { pick.selection }
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.settleAnimation) private var settleAnimation
@@ -12,7 +13,7 @@ struct FolderPickSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(pick.root.node.name)
+                    Text(selection.root.name)
                         .font(.headline)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -23,12 +24,12 @@ struct FolderPickSheet: View {
                         .contentTransition(.numericText())
                 }
                 Spacer(minLength: 12)
-                Button(pick.count == pick.total ? "Deselect All" : "Select All") {
-                    if pick.count == pick.total { pick.deselectAll() } else { pick.selectAll() }
+                Button(selection.count == selection.total ? "Deselect All" : "Select All") {
+                    if selection.count == selection.total { pick.selection.deselectAll() } else { pick.selection.selectAll() }
                 }
             }
 
-            List(pick.root.children ?? [], children: \.children) { item in
+            List(selection.root.children, children: \.outlineChildren) { item in
                 PickRow(item: item, pick: pick)
             }
             .listStyle(.inset)
@@ -39,29 +40,29 @@ struct FolderPickSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(pick.count == 1 ? "Download" : "Download \(pick.count) Files") {
-                    model.download([pick.root.node], from: pick.source, including: pick.files)
+                Button(selection.count == 1 ? "Download" : "Download \(selection.count) Files") {
+                    model.download(pick)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)
                 .buttonStyle(.borderedProminent)
-                .disabled(pick.files.isEmpty)
+                .disabled(selection.count == 0)
             }
         }
         .padding(20)
         .frame(minWidth: 480, idealWidth: 560, minHeight: 380, idealHeight: 480)
-        .animation(settleAnimation, value: pick.count)
+        .animation(settleAnimation, value: selection.count)
     }
 
     private var subtitle: String {
-        pick.files.isEmpty
+        selection.count == 0
             ? "Nothing selected"
-            : "\(pick.count) of \(pick.total) files — \(byteText(pick.bytes))"
+            : "\(selection.count) of \(selection.total) files — \(byteText(selection.bytes))"
     }
 }
 
 private struct PickRow: View {
-    let item: PickNode
+    let item: MegaNode
     let pick: FolderPick
 
     @Environment(\.settleAnimation) private var settleAnimation
@@ -69,7 +70,7 @@ private struct PickRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Button {
-                withAnimation(settleAnimation) { pick.toggle(item) }
+                withAnimation(settleAnimation) { pick.selection.toggle(item) }
             } label: {
                 Image(systemName: symbol)
                     .font(.system(size: 14))
@@ -77,21 +78,21 @@ private struct PickRow: View {
                     .contentTransition(.symbolEffect(.replace))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Include \(item.node.name)")
+            .accessibilityLabel("Include \(item.name)")
             .accessibilityValue(accessibilityState)
 
-            NodeLabel(node: item.node)
+            NodeLabel(node: item)
             Spacer(minLength: 8)
 
-            Text(byteText(item.byteCount))
+            Text(byteText(item.totalSize))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
         }
         .contentShape(.rect)
-        .onTapGesture { withAnimation(settleAnimation) { pick.toggle(item) } }
+        .onTapGesture { withAnimation(settleAnimation) { pick.selection.toggle(item) } }
     }
 
-    private var state: FolderPick.Check { pick.check(item) }
+    private var state: FileSelection.Check { pick.selection.check(item) }
 
     private var symbol: String {
         switch state {
@@ -108,4 +109,8 @@ private struct PickRow: View {
         case .all: "Included"
         }
     }
+}
+
+private extension MegaNode {
+    var outlineChildren: [MegaNode]? { isDirectory ? children : nil }
 }

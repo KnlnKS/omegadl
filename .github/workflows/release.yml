@@ -55,6 +55,9 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      - name: Test app
+        run: xcodebuild -project OmegaDL.xcodeproj -scheme OmegaDL -derivedDataPath build test
+
       - name: Resolve version
         id: version
         run: |
